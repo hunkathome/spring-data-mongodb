@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2023 the original author or authors.
+ * Copyright 2013-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -114,7 +114,7 @@ public class ExpressionNode implements Iterable<ExpressionNode> {
 	 * @return
 	 */
 	boolean isOfSameTypeAs(@Nullable ExpressionNode node) {
-		return node == null ? false : this.node.getClass().equals(node.node.getClass());
+		return node != null && this.node.getClass().equals(node.node.getClass());
 	}
 
 	/**

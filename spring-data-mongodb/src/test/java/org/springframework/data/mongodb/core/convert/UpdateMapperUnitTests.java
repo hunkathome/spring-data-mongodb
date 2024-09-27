@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2023 the original author or authors.
+ * Copyright 2013-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -760,6 +760,18 @@ class UpdateMapperUnitTests {
 
 		assertThat(mappedUpdate).containsEntry("$set.concreteMap.jasnah.name", "kholin");
 		assertThat(mappedUpdate).doesNotContainKey("$set.concreteMap.jasnah._class");
+	}
+
+	@Test // GH-4567
+	void updateShouldAllowNullValuesInMap() {
+
+		Map<Object, NestedDocument> map = Collections.singletonMap("jasnah", new NestedDocument("kholin"));
+
+		Update update = new Update().set("concreteMap", Collections.singletonMap("jasnah", null));
+		Document mappedUpdate = mapper.getMappedObject(update.getUpdateObject(),
+				context.getPersistentEntity(EntityWithObjectMap.class));
+
+		assertThat(mappedUpdate).isEqualTo(new Document("$set", new Document("concreteMap", Collections.singletonMap("jasnah", null))));
 	}
 
 	@Test // DATAMONGO-1250

@@ -1,5 +1,5 @@
 /*
- * Copyright 2010-2023 the original author or authors.
+ * Copyright 2010-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,6 +30,7 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.bson.Document;
 import org.bson.conversions.Bson;
+
 import org.springframework.beans.BeansException;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationContextAware;
@@ -103,6 +104,7 @@ import org.springframework.data.mongodb.core.query.UpdateDefinition;
 import org.springframework.data.mongodb.core.query.UpdateDefinition.ArrayFilter;
 import org.springframework.data.mongodb.core.timeseries.Granularity;
 import org.springframework.data.mongodb.core.validation.Validator;
+import org.springframework.data.mongodb.util.MongoCompatibilityAdapter;
 import org.springframework.data.projection.EntityProjection;
 import org.springframework.data.util.CloseableIterator;
 import org.springframework.data.util.Optionals;
@@ -562,8 +564,8 @@ public class MongoTemplate
 		Document fieldsObject = query.getFieldsObject();
 
 		if (LOGGER.isDebugEnabled()) {
-			LOGGER.debug(String.format("Executing query: %s sort: %s fields: %s in collection: %s",
-					serializeToJsonSafely(queryObject), sortObject, fieldsObject, collectionName));
+			LOGGER.debug(String.format("Executing query: %s fields: %s sort: %s in collection: %s",
+					serializeToJsonSafely(queryObject), fieldsObject, serializeToJsonSafely(sortObject), collectionName));
 		}
 
 		this.executeQueryInternal(new FindCallback(createDelegate(query), queryObject, fieldsObject, null),
@@ -722,7 +724,7 @@ public class MongoTemplate
 
 		return execute(db -> {
 
-			for (String name : db.listCollectionNames()) {
+			for (String name : MongoCompatibilityAdapter.mongoDatabaseAdapter().forDb(db).listCollectionNames()) {
 				if (name.equals(collectionName)) {
 					return true;
 				}
@@ -1379,12 +1381,7 @@ public class MongoTemplate
 			}
 
 			String collection = getCollectionName(ClassUtils.getUserClass(element));
-			List<T> collectionElements = elementsByCollection.get(collection);
-
-			if (null == collectionElements) {
-				collectionElements = new ArrayList<>();
-				elementsByCollection.put(collection, collectionElements);
-			}
+			List<T> collectionElements = elementsByCollection.computeIfAbsent(collection, k -> new ArrayList<>());
 
 			collectionElements.add(element);
 		}
@@ -1606,9 +1603,7 @@ public class MongoTemplate
 				MongoPersistentEntity<?> entity = mappingContext.getPersistentEntity(entityClass);
 				UpdateContext updateContext = queryOperations.replaceSingleContext(mapped, true);
 				Document replacement = updateContext.getMappedUpdate(entity);
-
-				Document filter = updateContext.getMappedQuery(entity);
-
+				Document filter = updateContext.getReplacementQuery();
 				if (updateContext.requiresShardKey(filter, entity)) {
 
 					if (entity.getShardKey().isImmutable()) {
@@ -1970,7 +1965,7 @@ public class MongoTemplate
 			}
 
 			if (mapReduceOptions.getOutputSharded().isPresent()) {
-				mapReduce = mapReduce.sharded(mapReduceOptions.getOutputSharded().get());
+				MongoCompatibilityAdapter.mapReduceIterableAdapter(mapReduce).sharded(mapReduceOptions.getOutputSharded().get());
 			}
 
 			if (StringUtils.hasText(mapReduceOptions.getOutputCollection()) && !mapReduceOptions.usesInlineOutput()) {
@@ -2194,8 +2189,11 @@ public class MongoTemplate
 							.getCollation());
 
 			AggregateIterable<Document> aggregateIterable = delegate.prepare(collection).aggregate(pipeline, Document.class) //
-					.collation(collation.map(Collation::toMongoCollation).orElse(null)) //
-					.allowDiskUse(options.isAllowDiskUse());
+					.collation(collation.map(Collation::toMongoCollation).orElse(null));
+
+			if (options.isAllowDiskUseSet()) {
+				aggregateIterable = aggregateIterable.allowDiskUse(options.isAllowDiskUse());
+			}
 
 			if (options.getCursorBatchSize() != null) {
 				aggregateIterable = aggregateIterable.batchSize(options.getCursorBatchSize());
@@ -2258,8 +2256,11 @@ public class MongoTemplate
 
 			CollectionPreparerDelegate delegate = CollectionPreparerDelegate.of(options);
 
-			AggregateIterable<Document> cursor = delegate.prepare(collection).aggregate(pipeline, Document.class) //
-					.allowDiskUse(options.isAllowDiskUse());
+			AggregateIterable<Document> cursor = delegate.prepare(collection).aggregate(pipeline, Document.class);
+
+			if (options.isAllowDiskUseSet()) {
+				cursor = cursor.allowDiskUse(options.isAllowDiskUse());
+			}
 
 			if (options.getCursorBatchSize() != null) {
 				cursor = cursor.batchSize(options.getCursorBatchSize());
@@ -2269,6 +2270,10 @@ public class MongoTemplate
 			HintFunction hintFunction = options.getHintObject().map(HintFunction::from).orElseGet(HintFunction::empty);
 			if (options.getHintObject().isPresent()) {
 				cursor = hintFunction.apply(mongoDbFactory, cursor::hintString, cursor::hint);
+			}
+
+			if (options.hasExecutionTimeLimit()) {
+				cursor = cursor.maxTime(options.getMaxTime().toMillis(), TimeUnit.MILLISECONDS);
 			}
 
 			Class<?> domainType = aggregation instanceof TypedAggregation typedAggregation ? typedAggregation.getInputType()
@@ -2315,11 +2320,9 @@ public class MongoTemplate
 
 	protected String replaceWithResourceIfNecessary(String function) {
 
-		String func = function;
-
 		if (this.resourceLoader != null && ResourceUtils.isUrl(function)) {
 
-			Resource functionResource = resourceLoader.getResource(func);
+			Resource functionResource = resourceLoader.getResource(function);
 
 			if (!functionResource.exists()) {
 				throw new InvalidDataAccessApiUsageException(String.format("Resource %s not found", function));
@@ -2339,7 +2342,7 @@ public class MongoTemplate
 			}
 		}
 
-		return func;
+		return function;
 	}
 
 	@Override
@@ -2347,7 +2350,7 @@ public class MongoTemplate
 	public Set<String> getCollectionNames() {
 		return execute(db -> {
 			Set<String> result = new LinkedHashSet<>();
-			for (String name : db.listCollectionNames()) {
+			for (String name : MongoCompatibilityAdapter.mongoDatabaseAdapter().forDb(db).listCollectionNames()) {
 				result.add(name);
 			}
 			return result;
@@ -2590,10 +2593,12 @@ public class MongoTemplate
 		QueryContext queryContext = queryOperations.createQueryContext(new BasicQuery(query, fields));
 		Document mappedFields = queryContext.getMappedFields(entity, EntityProjection.nonProjecting(entityClass));
 		Document mappedQuery = queryContext.getMappedQuery(entity);
+		Document mappedSort = getMappedSortObject(query, entityClass);
 
 		if (LOGGER.isDebugEnabled()) {
-			LOGGER.debug(String.format("find using query: %s fields: %s for class: %s in collection: %s",
-					serializeToJsonSafely(mappedQuery), mappedFields, entityClass, collectionName));
+			LOGGER.debug(String.format("find using query: %s fields: %s sort: %s for class: %s in collection: %s",
+					serializeToJsonSafely(mappedQuery), mappedFields, serializeToJsonSafely(mappedSort), entityClass,
+					collectionName));
 		}
 
 		return executeFindMultiInternal(new FindCallback(collectionPreparer, mappedQuery, mappedFields, null),
@@ -2615,10 +2620,12 @@ public class MongoTemplate
 		QueryContext queryContext = queryOperations.createQueryContext(new BasicQuery(query, fields));
 		Document mappedFields = queryContext.getMappedFields(entity, projection);
 		Document mappedQuery = queryContext.getMappedQuery(entity);
+		Document mappedSort = getMappedSortObject(query, sourceClass);
 
 		if (LOGGER.isDebugEnabled()) {
-			LOGGER.debug(String.format("find using query: %s fields: %s for class: %s in collection: %s",
-					serializeToJsonSafely(mappedQuery), mappedFields, sourceClass, collectionName));
+			LOGGER.debug(String.format("find using query: %s fields: %s sort: %s for class: %s in collection: %s",
+					serializeToJsonSafely(mappedQuery), mappedFields, serializeToJsonSafely(mappedSort), sourceClass,
+					collectionName));
 		}
 
 		return executeFindMultiInternal(new FindCallback(collectionPreparer, mappedQuery, mappedFields, null), preparer,
@@ -2698,26 +2705,22 @@ public class MongoTemplate
 	protected <T> T doFindAndRemove(CollectionPreparer collectionPreparer, String collectionName, Document query,
 			Document fields, Document sort, @Nullable Collation collation, Class<T> entityClass) {
 
-		EntityReader<? super T, Bson> readerToUse = this.mongoConverter;
-
 		if (LOGGER.isDebugEnabled()) {
 			LOGGER.debug(String.format("findAndRemove using query: %s fields: %s sort: %s for class: %s in collection: %s",
-					serializeToJsonSafely(query), fields, sort, entityClass, collectionName));
+					serializeToJsonSafely(query), fields, serializeToJsonSafely(sort), entityClass, collectionName));
 		}
 
 		MongoPersistentEntity<?> entity = mappingContext.getPersistentEntity(entityClass);
 
 		return executeFindOneInternal(new FindAndRemoveCallback(collectionPreparer,
 				queryMapper.getMappedObject(query, entity), fields, sort, collation),
-				new ReadDocumentCallback<>(readerToUse, entityClass, collectionName), collectionName);
+				new ReadDocumentCallback<>(this.mongoConverter, entityClass, collectionName), collectionName);
 	}
 
 	@SuppressWarnings("ConstantConditions")
 	protected <T> T doFindAndModify(CollectionPreparer collectionPreparer, String collectionName, Document query,
 			Document fields, Document sort, Class<T> entityClass, UpdateDefinition update,
 			@Nullable FindAndModifyOptions options) {
-
-		EntityReader<? super T, Bson> readerToUse = this.mongoConverter;
 
 		if (options == null) {
 			options = new FindAndModifyOptions();
@@ -2735,14 +2738,15 @@ public class MongoTemplate
 		if (LOGGER.isDebugEnabled()) {
 			LOGGER.debug(String.format(
 					"findAndModify using query: %s fields: %s sort: %s for class: %s and update: %s in collection: %s",
-					serializeToJsonSafely(mappedQuery), fields, sort, entityClass, serializeToJsonSafely(mappedUpdate),
+					serializeToJsonSafely(mappedQuery), fields, serializeToJsonSafely(sort), entityClass,
+					serializeToJsonSafely(mappedUpdate),
 					collectionName));
 		}
 
 		return executeFindOneInternal(
 				new FindAndModifyCallback(collectionPreparer, mappedQuery, fields, sort, mappedUpdate,
 						update.getArrayFilters().stream().map(ArrayFilter::asDocument).collect(Collectors.toList()), options),
-				new ReadDocumentCallback<>(readerToUse, entityClass, collectionName), collectionName);
+				new ReadDocumentCallback<>(this.mongoConverter, entityClass, collectionName), collectionName);
 	}
 
 	/**

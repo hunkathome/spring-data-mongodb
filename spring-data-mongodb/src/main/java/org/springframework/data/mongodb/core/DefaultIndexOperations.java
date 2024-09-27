@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2023 the original author or authors.
+ * Copyright 2011-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import java.util.Collection;
 import java.util.List;
 
 import org.bson.Document;
+
 import org.springframework.dao.DataAccessException;
 import org.springframework.data.mongodb.MongoDatabaseFactory;
 import org.springframework.data.mongodb.UncategorizedMongoDbException;
@@ -54,7 +55,7 @@ public class DefaultIndexOperations implements IndexOperations {
 	private final QueryMapper mapper;
 	private final @Nullable Class<?> type;
 
-	private MongoOperations mongoOperations;
+	private final MongoOperations mongoOperations;
 
 	/**
 	 * Creates a new {@link DefaultIndexOperations}.
@@ -114,7 +115,8 @@ public class DefaultIndexOperations implements IndexOperations {
 		this.type = type;
 	}
 
-	public String ensureIndex(final IndexDefinition indexDefinition) {
+	@Override
+	public String ensureIndex(IndexDefinition indexDefinition) {
 
 		return execute(collection -> {
 
@@ -148,7 +150,8 @@ public class DefaultIndexOperations implements IndexOperations {
 		return null;
 	}
 
-	public void dropIndex(final String name) {
+	@Override
+	public void dropIndex(String name) {
 
 		execute(collection -> {
 			collection.dropIndex(name);
@@ -166,15 +169,18 @@ public class DefaultIndexOperations implements IndexOperations {
 		Document result = mongoOperations
 				.execute(db -> db.runCommand(new Document("collMod", collectionName).append("index", indexOptions)));
 
-		if(NumberUtils.convertNumberToTargetClass(result.get("ok", (Number) 0), Integer.class) != 1) {
-			throw new UncategorizedMongoDbException("Index '%s' could not be modified. Response was %s".formatted(name, result.toJson()), null);
+		if (NumberUtils.convertNumberToTargetClass(result.get("ok", (Number) 0), Integer.class) != 1) {
+			throw new UncategorizedMongoDbException(
+					"Index '%s' could not be modified. Response was %s".formatted(name, result.toJson()), null);
 		}
 	}
 
+	@Override
 	public void dropAllIndexes() {
 		dropIndex("*");
 	}
 
+	@Override
 	public List<IndexInfo> getIndexInfo() {
 
 		return execute(new CollectionCallback<List<IndexInfo>>() {
@@ -208,10 +214,6 @@ public class DefaultIndexOperations implements IndexOperations {
 
 		Assert.notNull(callback, "CollectionCallback must not be null");
 
-		if (type != null) {
-			return mongoOperations.execute(type, callback);
-		}
-
 		return mongoOperations.execute(collectionName, callback);
 	}
 
@@ -227,7 +229,8 @@ public class DefaultIndexOperations implements IndexOperations {
 				mapper.getMappedSort((Document) sourceOptions.get(PARTIAL_FILTER_EXPRESSION_KEY), entity));
 	}
 
-	private static IndexOptions addDefaultCollationIfRequired(IndexOptions ops, MongoPersistentEntity<?> entity) {
+	private static IndexOptions addDefaultCollationIfRequired(IndexOptions ops,
+			@Nullable MongoPersistentEntity<?> entity) {
 
 		if (ops.getCollation() != null || entity == null || !entity.hasCollation()) {
 			return ops;

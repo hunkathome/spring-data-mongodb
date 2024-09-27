@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2023 the original author or authors.
+ * Copyright 2020-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -49,8 +49,7 @@ abstract class DocumentEnhancingOperation implements InheritsFieldsAggregationOp
 	@Override
 	public Document toDocument(AggregationOperationContext context) {
 
-		InheritingExposedFieldsAggregationOperationContext operationContext = new InheritingExposedFieldsAggregationOperationContext(
-				exposedFields, context);
+		AggregationOperationContext operationContext = context.inheritAndExpose(exposedFields);
 
 		if (valueMap.size() == 1) {
 			return context.getMappedObject(

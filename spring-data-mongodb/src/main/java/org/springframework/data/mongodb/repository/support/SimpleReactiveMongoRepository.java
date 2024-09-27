@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2023 the original author or authors.
+ * Copyright 2016-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -63,6 +63,7 @@ import com.mongodb.client.result.DeleteResult;
  * @author Ruben J Garcia
  * @author Jens Schauder
  * @author Clément Petit
+ * @author Kirill Egorov
  * @since 2.0
  */
 public class SimpleReactiveMongoRepository<T, ID extends Serializable> implements ReactiveMongoRepository<T, ID> {
@@ -121,7 +122,7 @@ public class SimpleReactiveMongoRepository<T, ID extends Serializable> implement
 
 		Assert.notNull(entityStream, "The given Publisher of entities must not be null");
 
-		return Flux.from(entityStream).flatMap(entity -> entityInformation.isNew(entity) ? //
+		return Flux.from(entityStream).flatMapSequential(entity -> entityInformation.isNew(entity) ? //
 				mongoOperations.insert(entity, entityInformation.getCollectionName()) : //
 				mongoOperations.save(entity, entityInformation.getCollectionName()));
 	}
@@ -191,7 +192,7 @@ public class SimpleReactiveMongoRepository<T, ID extends Serializable> implement
 		Assert.notNull(ids, "The given Publisher of Id's must not be null");
 
 		Optional<ReadPreference> readPreference = getReadPreference();
-		return Flux.from(ids).buffer().flatMap(listOfIds -> {
+		return Flux.from(ids).buffer().flatMapSequential(listOfIds -> {
 			Query query = getIdQuery(listOfIds);
 			readPreference.ifPresent(query::withReadPreference);
 			return mongoOperations.find(query, entityInformation.getJavaType(), entityInformation.getCollectionName());
@@ -345,7 +346,8 @@ public class SimpleReactiveMongoRepository<T, ID extends Serializable> implement
 
 		Assert.notNull(entities, "The given Publisher of entities must not be null");
 
-		return Flux.from(entities).flatMap(entity -> mongoOperations.insert(entity, entityInformation.getCollectionName()));
+		return Flux.from(entities)
+				.flatMapSequential(entity -> mongoOperations.insert(entity, entityInformation.getCollectionName()));
 	}
 
 	// -------------------------------------------------------------------------
@@ -554,7 +556,7 @@ public class SimpleReactiveMongoRepository<T, ID extends Serializable> implement
 			query.limit(getLimit());
 
 			if (!getFieldsToInclude().isEmpty()) {
-				query.fields().include(getFieldsToInclude().toArray(new String[0]));
+				query.fields().include(getFieldsToInclude());
 			}
 
 			readPreference.ifPresent(query::withReadPreference);

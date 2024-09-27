@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2023 the original author or authors.
+ * Copyright 2011-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -80,7 +80,10 @@ public class MongoMappingContext extends AbstractMappingContext<MongoPersistentE
 	@Override
 	public MongoPersistentProperty createPersistentProperty(Property property, MongoPersistentEntity<?> owner,
 			SimpleTypeHolder simpleTypeHolder) {
-		return new CachingMongoPersistentProperty(property, owner, simpleTypeHolder, fieldNamingStrategy);
+
+		CachingMongoPersistentProperty cachingMongoPersistentProperty = new CachingMongoPersistentProperty(property, owner, simpleTypeHolder, fieldNamingStrategy);
+		cachingMongoPersistentProperty.validate();
+		return cachingMongoPersistentProperty;
 	}
 
 	@Override

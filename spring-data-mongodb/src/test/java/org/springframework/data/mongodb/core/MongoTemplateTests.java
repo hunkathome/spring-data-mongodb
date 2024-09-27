@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2023 the original author or authors.
+ * Copyright 2011-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -1409,18 +1409,21 @@ public class MongoTemplateTests {
 		assertThat(result.get(0).field).isEqualTo("Beauford");
 	}
 
-	@Test // DATAMONGO-447
+	@Test // DATAMONGO-447, GH-4707
 	public void storesAndRemovesTypeWithComplexId() {
 
 		MyId id = new MyId();
+		id.id = Instant.now().minusSeconds(2);
 		id.first = "foo";
 		id.second = "bar";
+		id.id = Instant.now().minusSeconds(3);
 
 		TypeWithMyId source = new TypeWithMyId();
 		source.id = id;
 
 		template.save(source);
-		template.remove(query(where("id").is(id)), TypeWithMyId.class);
+		assertThat(template.remove(query(where("id").is(id)), TypeWithMyId.class)).extracting(DeleteResult::getDeletedCount)
+				.isEqualTo(1L);
 	}
 
 	@Test // DATAMONGO-506
@@ -2552,6 +2555,53 @@ public class MongoTemplateTests {
 				new MyPerson("Heisenberg"), FindAndReplaceOptions.empty(), MyPerson.class, MyPersonProjection.class);
 
 		assertThat(projection.getName()).isEqualTo("Walter");
+	}
+
+	@Test // GH-4707
+	public void findAndReplaceUpsertsObjectWithComplexId() {
+
+		MyId id = new MyId();
+		id.id = Instant.now().minusSeconds(2);
+		id.first = "foo";
+		id.second = "bar";
+		id.time = Instant.now().minusSeconds(3);
+
+		TypeWithMyId replacement = new TypeWithMyId();
+		replacement.value = "spring";
+
+		template.findAndReplace(query(where("id").is(id)), replacement, FindAndReplaceOptions.options().upsert());
+		template.doInCollection(TypeWithMyId.class, collection -> {
+
+			org.bson.Document dbValue = collection.find(new org.bson.Document("_id.first", "foo")).first();
+
+			assertThat(dbValue).isNotNull();
+			assertThat(dbValue.getEmbedded(List.of("_id", "_id"), Object.class)).isInstanceOf(Date.class);
+			assertThat(dbValue.getEmbedded(List.of("_id", "t"), Object.class)).isInstanceOf(Date.class);
+		});
+	}
+
+	@Test // GH-4609
+	public void shouldReadNestedProjection() {
+
+		MyPerson walter = new MyPerson("Walter");
+		walter.address = new Address("spring", "data");
+		template.save(walter);
+
+		PersonPWA result = template.query(MyPerson.class)
+				.as(PersonPWA.class)
+				.matching(where("id").is(walter.id))
+				.firstValue();
+
+		assertThat(result.getAddress().getCity()).isEqualTo("data");
+	}
+
+	interface PersonPWA {
+		String getName();
+		AdressProjection getAddress();
+	}
+
+	interface AdressProjection {
+		String getCity();
 	}
 
 	@Test // GH-4300
@@ -4373,11 +4423,15 @@ public class MongoTemplateTests {
 
 		String first;
 		String second;
+		Instant id;
+
+		@Field("t") Instant time;
 	}
 
 	static class TypeWithMyId {
 
 		@Id MyId id;
+		String value;
 	}
 
 	static class Sample {

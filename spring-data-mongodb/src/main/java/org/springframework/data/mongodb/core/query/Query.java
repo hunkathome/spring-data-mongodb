@@ -1,5 +1,5 @@
 /*
- * Copyright 2010-2023 the original author or authors.
+ * Copyright 2010-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -78,6 +78,20 @@ public class Query implements ReadConcernAware, ReadPreferenceAware {
 	private Meta meta = new Meta();
 
 	private Optional<Collation> collation = Optional.empty();
+
+	Query(Query query) {
+		this.restrictedTypes = query.restrictedTypes;
+		this.fieldSpec = query.fieldSpec;
+		this.sort = query.sort;
+		this.limit = query.limit;
+		this.skip = query.skip;
+		this.keysetScrollPosition = query.keysetScrollPosition;
+		this.readConcern = query.readConcern;
+		this.readPreference = query.readPreference;
+		this.hint = query.hint;
+		this.meta = query.meta;
+		this.collation = query.collation;
+	}
 
 	/**
 	 * Static factory method to create a {@link Query} using the provided {@link CriteriaDefinition}.
@@ -271,12 +285,10 @@ public class Query implements ReadConcernAware, ReadPreferenceAware {
 	 */
 	public Query with(Pageable pageable) {
 
-		if (pageable.isUnpaged()) {
-			return this;
+		if (pageable.isPaged()) {
+			this.limit = pageable.toLimit();
+			this.skip = pageable.getOffset();
 		}
-
-		this.limit = pageable.toLimit();
-		this.skip = pageable.getOffset();
 
 		return with(pageable.getSort());
 	}
@@ -312,7 +324,7 @@ public class Query implements ReadConcernAware, ReadPreferenceAware {
 
 		Assert.notNull(position, "ScrollPosition must not be null");
 
-		this.skip = position.getOffset();
+		this.skip = position.isInitial() ? 0 : position.getOffset() + 1;
 		this.keysetScrollPosition = null;
 		return this;
 	}
@@ -750,7 +762,7 @@ public class Query implements ReadConcernAware, ReadPreferenceAware {
 		boolean sortEqual = this.sort.equals(that.sort);
 		boolean hintEqual = nullSafeEquals(this.hint, that.hint);
 		boolean skipEqual = this.skip == that.skip;
-		boolean limitEqual = this.limit == that.limit;
+		boolean limitEqual = nullSafeEquals(this.limit, that.limit);
 		boolean metaEqual = nullSafeEquals(this.meta, that.meta);
 		boolean collationEqual = nullSafeEquals(this.collation.orElse(null), that.collation.orElse(null));
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2023 the original author or authors.
+ * Copyright 2016-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@ package org.springframework.data.mongodb.core.aggregation;
 
 import org.bson.Document;
 import org.springframework.data.mongodb.core.aggregation.ExposedFields.FieldReference;
+import org.springframework.lang.Nullable;
 
 /**
  * {@link ExposedFieldsAggregationOperationContext} that inherits fields from its parent
@@ -36,11 +37,12 @@ class InheritingExposedFieldsAggregationOperationContext extends ExposedFieldsAg
 	 *
 	 * @param exposedFields must not be {@literal null}.
 	 * @param previousContext must not be {@literal null}.
+	 * @param lookupPolicy must not be {@literal null}.
 	 */
 	public InheritingExposedFieldsAggregationOperationContext(ExposedFields exposedFields,
-			AggregationOperationContext previousContext) {
+			AggregationOperationContext previousContext, FieldLookupPolicy lookupPolicy) {
 
-		super(exposedFields, previousContext);
+		super(exposedFields, previousContext, lookupPolicy);
 
 		this.previousContext = previousContext;
 	}
@@ -51,7 +53,7 @@ class InheritingExposedFieldsAggregationOperationContext extends ExposedFieldsAg
 	}
 
 	@Override
-	protected FieldReference resolveExposedField(Field field, String name) {
+	protected FieldReference resolveExposedField(@Nullable Field field, String name) {
 
 		FieldReference fieldReference = super.resolveExposedField(field, name);
 		if (fieldReference != null) {

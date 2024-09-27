@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2023 the original author or authors.
+ * Copyright 2011-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,18 +15,29 @@
  */
 package org.springframework.data.mongodb.core.convert;
 
-import java.util.*;
+import java.util.AbstractMap;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.bson.BsonRegularExpression;
 import org.bson.BsonValue;
 import org.bson.Document;
 import org.bson.conversions.Bson;
 import org.bson.types.ObjectId;
+
 import org.springframework.core.convert.ConversionService;
 import org.springframework.core.convert.converter.Converter;
 import org.springframework.data.annotation.Reference;
@@ -76,6 +87,7 @@ import com.mongodb.DBRef;
  * @author Mark Paluch
  * @author David Julia
  * @author Divya Srivastava
+ * @author Gyungrai Wang
  */
 public class QueryMapper {
 
@@ -218,7 +230,7 @@ public class QueryMapper {
 	 * Also converts and potentially adds missing property {@code $meta} representation.
 	 *
 	 * @param fieldsObject must not be {@literal null}.
-	 * @param entity can be {@litearl null}.
+	 * @param entity can be {@literal null}.
 	 * @return
 	 * @since 1.6
 	 */
@@ -301,7 +313,7 @@ public class QueryMapper {
 				PropertyPath path = PropertyPath.from(field.getKey(), entity.getTypeInformation());
 				PersistentPropertyPath<MongoPersistentProperty> persistentPropertyPath = mappingContext
 						.getPersistentPropertyPath(path);
-				MongoPersistentProperty property = mappingContext.getPersistentPropertyPath(path).getRequiredLeafProperty();
+				MongoPersistentProperty property = mappingContext.getPersistentPropertyPath(path).getLeafProperty();
 
 				if (property.isUnwrapped() && property.isEntity()) {
 
@@ -449,65 +461,14 @@ public class QueryMapper {
 		if (documentField.getProperty() != null
 				&& converter.getCustomConversions().hasValueConverter(documentField.getProperty())) {
 
-			MongoConversionContext conversionContext = new MongoConversionContext(new PropertyValueProvider<>() {
-				@Override
-				public <T> T getPropertyValue(MongoPersistentProperty property) {
-					throw new IllegalStateException("No enclosing property available");
-				}
-			}, documentField.getProperty(), converter);
 			PropertyValueConverter<Object, Object, ValueConversionContext<MongoPersistentProperty>> valueConverter = converter
 					.getCustomConversions().getPropertyValueConversions().getValueConverter(documentField.getProperty());
 
-			/* might be an $in clause with multiple entries */
-			if (!documentField.getProperty().isCollectionLike() && sourceValue instanceof Collection<?> collection) {
-				return collection.stream().map(it -> valueConverter.write(it, conversionContext)).collect(Collectors.toList());
-			}
-
-			return valueConverter.write(value, conversionContext);
+			return convertValue(documentField, sourceValue, value, valueConverter);
 		}
 
 		if (documentField.isIdField() && !documentField.isAssociation()) {
-
-			if (isDBObject(value)) {
-				DBObject valueDbo = (DBObject) value;
-				Document resultDbo = new Document(valueDbo.toMap());
-
-				if (valueDbo.containsField("$in") || valueDbo.containsField("$nin")) {
-					String inKey = valueDbo.containsField("$in") ? "$in" : "$nin";
-					List<Object> ids = new ArrayList<>();
-					for (Object id : (Iterable<?>) valueDbo.get(inKey)) {
-						ids.add(convertId(id, getIdTypeForField(documentField)));
-					}
-					resultDbo.put(inKey, ids);
-				} else if (valueDbo.containsField("$ne")) {
-					resultDbo.put("$ne", convertId(valueDbo.get("$ne"), getIdTypeForField(documentField)));
-				} else {
-					return getMappedObject(resultDbo, Optional.empty());
-				}
-				return resultDbo;
-			}
-
-			else if (isDocument(value)) {
-				Document valueDbo = (Document) value;
-				Document resultDbo = new Document(valueDbo);
-
-				if (valueDbo.containsKey("$in") || valueDbo.containsKey("$nin")) {
-					String inKey = valueDbo.containsKey("$in") ? "$in" : "$nin";
-					List<Object> ids = new ArrayList<>();
-					for (Object id : (Iterable<?>) valueDbo.get(inKey)) {
-						ids.add(convertId(id, getIdTypeForField(documentField)));
-					}
-					resultDbo.put(inKey, ids);
-				} else if (valueDbo.containsKey("$ne")) {
-					resultDbo.put("$ne", convertId(valueDbo.get("$ne"), getIdTypeForField(documentField)));
-				} else {
-					return getMappedObject(resultDbo, Optional.empty());
-				}
-				return resultDbo;
-
-			} else {
-				return convertId(value, getIdTypeForField(documentField));
-			}
+			return convertIdField(documentField, value);
 		}
 
 		if (value == null) {
@@ -547,7 +508,7 @@ public class QueryMapper {
 
 		Assert.notNull(documentField, "Document field must not be null");
 
-		if (value == null) {
+		if (value == null || documentField.getProperty() == null) {
 			return false;
 		}
 
@@ -579,7 +540,6 @@ public class QueryMapper {
 	 * @return
 	 */
 	@Nullable
-	@SuppressWarnings("unchecked")
 	protected Object convertSimpleOrDocument(Object source, @Nullable MongoPersistentEntity<?> entity) {
 
 		if (source instanceof Example<?> example) {
@@ -587,8 +547,8 @@ public class QueryMapper {
 		}
 
 		if (source instanceof AggregationExpression age) {
-			return age
-					.toDocument(new RelaxedTypeBasedAggregationOperationContext(entity.getType(), this.mappingContext, this));
+			return entity == null ? age.toDocument() : //
+					age.toDocument(new RelaxedTypeBasedAggregationOperationContext(entity.getType(), this.mappingContext, this));
 		}
 
 		if (source instanceof MongoExpression exr) {
@@ -603,10 +563,6 @@ public class QueryMapper {
 			return getMappedObject((Document) source, entity);
 		}
 
-		if (source instanceof BasicDBList) {
-			return delegateConvertToMongoType(source, entity);
-		}
-
 		if (isDBObject(source)) {
 			return getMappedObject((BasicDBObject) source, entity);
 		}
@@ -615,20 +571,20 @@ public class QueryMapper {
 			return source;
 		}
 
-		if (source instanceof Map) {
+		if (source instanceof Map<?, ?> sourceMap) {
 
-			Map<String, Object> map = new LinkedHashMap<>();
+			Map<String, Object> map = new LinkedHashMap<>(sourceMap.size(), 1F);
 
-			((Map<String, Object>) source).entrySet().forEach(it -> {
+			for (Entry<?, ?> entry : sourceMap.entrySet()) {
 
-				String key = ObjectUtils.nullSafeToString(converter.convertToMongoType(it.getKey()));
+				String key = ObjectUtils.nullSafeToString(converter.convertToMongoType(entry.getKey()));
 
-				if (it.getValue()instanceof Document document) {
+				if (entry.getValue() instanceof Document document) {
 					map.put(key, getMappedObject(document, entity));
 				} else {
-					map.put(key, delegateConvertToMongoType(it.getValue(), entity));
+					map.put(key, delegateConvertToMongoType(entry.getValue(), entity));
 				}
-			});
+			}
 
 			return map;
 		}
@@ -654,6 +610,7 @@ public class QueryMapper {
 		return converter.convertToMongoType(source, entity == null ? null : entity.getTypeInformation());
 	}
 
+	@Nullable
 	protected Object convertAssociation(Object source, Field field) {
 		Object value = convertAssociation(source, field.getProperty());
 		if (value != null && field.isIdField() && field.getFieldType() != value.getClass()) {
@@ -678,8 +635,7 @@ public class QueryMapper {
 
 		if (source instanceof DBRef ref) {
 
-			Object id = convertId(ref.getId(),
-					property != null && property.isIdProperty() ? property.getFieldType() : ObjectId.class);
+			Object id = convertId(ref.getId(), property.isIdProperty() ? property.getFieldType() : ObjectId.class);
 
 			if (StringUtils.hasText(ref.getDatabaseName())) {
 				return new DBRef(ref.getDatabaseName(), ref.getCollectionName(), id);
@@ -696,9 +652,8 @@ public class QueryMapper {
 			return result;
 		}
 
-		if (property.isMap()) {
+		if (property.isMap() && source instanceof Document dbObject) {
 			Document result = new Document();
-			Document dbObject = (Document) source;
 			for (String key : dbObject.keySet()) {
 				result.put(key, createReferenceFor(dbObject.get(key), property));
 			}
@@ -706,6 +661,83 @@ public class QueryMapper {
 		}
 
 		return createReferenceFor(source, property);
+	}
+
+	@Nullable
+	private Object convertValue(Field documentField, Object sourceValue, Object value,
+			PropertyValueConverter<Object, Object, ValueConversionContext<MongoPersistentProperty>> valueConverter) {
+
+		MongoPersistentProperty property = documentField.getProperty();
+		MongoConversionContext conversionContext = new MongoConversionContext(NoPropertyPropertyValueProvider.INSTANCE,
+				property, converter);
+
+		/* might be an $in clause with multiple entries */
+		if (property != null && !property.isCollectionLike() && sourceValue instanceof Collection<?> collection) {
+
+			if (collection.isEmpty()) {
+				return collection;
+			}
+
+			List<Object> converted = new ArrayList<>(collection.size());
+			for (Object o : collection) {
+				converted.add(valueConverter.write(o, conversionContext));
+			}
+
+			return converted;
+		}
+
+		if (property != null && !documentField.getProperty().isMap() && sourceValue instanceof Document document) {
+
+			return BsonUtils.mapValues(document, (key, val) -> {
+				if (isKeyword(key)) {
+					return getMappedValue(documentField, val);
+				}
+				return val;
+			});
+		}
+
+		return valueConverter.write(value, conversionContext);
+	}
+
+	@Nullable
+	@SuppressWarnings("unchecked")
+	private Object convertIdField(Field documentField, Object source) {
+
+		Object value = source;
+		if (isDBObject(source)) {
+			DBObject valueDbo = (DBObject) source;
+			value = new Document(valueDbo.toMap());
+		}
+
+		if (!isDocument(value)) {
+			return convertId(value, getIdTypeForField(documentField));
+		}
+
+		Document valueDbo = (Document) value;
+		Document resultDbo = new Document(valueDbo);
+
+		for (Entry<String, Object> entry : valueDbo.entrySet()) {
+
+			String key = entry.getKey();
+			if ("$nin".equals(key) || "$in".equals(key) || "$all".equals(key)) {
+				List<Object> ids = new ArrayList<>();
+				for (Object id : (Iterable<?>) valueDbo.get(key)) {
+					ids.add(convertId(id, getIdTypeForField(documentField)));
+				}
+				resultDbo.put(key, ids);
+			} else if (isKeyword(key)) {
+				resultDbo.put(key, convertIdField(documentField, entry.getValue()));
+			} else {
+				if (documentField.getProperty() != null && documentField.getProperty().isEntity()) {
+					Field propertyField = createPropertyField(documentField.getPropertyEntity(), key, mappingContext);
+					resultDbo.put(key, getMappedValue(propertyField, entry.getValue()));
+				} else {
+					resultDbo.put(key, getMappedValue(documentField, entry.getValue()));
+				}
+			}
+		}
+
+		return resultDbo;
 	}
 
 	/**
@@ -788,6 +820,11 @@ public class QueryMapper {
 	 */
 	@Nullable
 	public Object convertId(@Nullable Object id, Class<?> targetType) {
+
+		if (Quirks.skipConversion(id)) {
+			return id;
+		}
+
 		return converter.convertId(id, targetType);
 	}
 
@@ -841,7 +878,7 @@ public class QueryMapper {
 	 * conversions. In case of a {@link Collection} (used eg. for {@code $in} queries) the individual values will be
 	 * converted one by one.
 	 *
-	 * @param documentField the field and its meta data
+	 * @param documentField the field and its metadata
 	 * @param value the actual value. Can be {@literal null}.
 	 * @return the potentially converted target value.
 	 */
@@ -849,7 +886,7 @@ public class QueryMapper {
 	private Object applyFieldTargetTypeHintToValue(Field documentField, @Nullable Object value) {
 
 		if (value == null || documentField.getProperty() == null || !documentField.getProperty().hasExplicitWriteTarget()
-				|| value instanceof Document || value instanceof DBObject) {
+				|| value instanceof Document || value instanceof DBObject || Quirks.skipConversion(value)) {
 			return value;
 		}
 
@@ -879,8 +916,7 @@ public class QueryMapper {
 	 */
 	static class Keyword {
 
-		private static final Set<String> NON_DBREF_CONVERTING_KEYWORDS = new HashSet<>(
-				Arrays.asList("$", "$size", "$slice", "$gt", "$lt"));
+		private static final Set<String> NON_DBREF_CONVERTING_KEYWORDS = Set.of("$", "$size", "$slice", "$gt", "$lt");
 
 		private final String key;
 		private final Object value;
@@ -1336,11 +1372,8 @@ public class QueryMapper {
 
 		private boolean isPathToJavaLangClassProperty(PropertyPath path) {
 
-			if ((path.getType() == Class.class || path.getType().equals(Object.class))
-					&& path.getLeafProperty().getType() == Class.class) {
-				return true;
-			}
-			return false;
+			return (path.getType() == Class.class || path.getType().equals(Object.class))
+					&& path.getLeafProperty().getType() == Class.class;
 		}
 
 		private static String resolvePath(String source) {
@@ -1448,7 +1481,6 @@ public class QueryMapper {
 
 			private final Iterator<String> iterator;
 			private int currentIndex;
-			private String currentPropertyRoot;
 			private final List<String> pathParts;
 
 			public KeyMapper(String key,
@@ -1456,7 +1488,6 @@ public class QueryMapper {
 
 				this.pathParts = Arrays.asList(key.split("\\."));
 				this.iterator = pathParts.iterator();
-				this.currentPropertyRoot = iterator.next();
 				this.currentIndex = 0;
 			}
 
@@ -1571,5 +1602,32 @@ public class QueryMapper {
 
 	public MongoConverter getConverter() {
 		return converter;
+	}
+
+	private enum NoPropertyPropertyValueProvider implements PropertyValueProvider<MongoPersistentProperty> {
+
+		INSTANCE;
+
+		@Override
+		public <T> T getPropertyValue(MongoPersistentProperty property) {
+			throw new IllegalStateException("No enclosing property source available");
+		}
+	}
+
+	/*
+	 * Types that must not be converted.
+	 */
+	static class Quirks {
+
+		private static final Set<Class<?>> types = Set.of(Pattern.class, BsonRegularExpression.class);
+
+		static boolean skipConversion(@Nullable Object value) {
+
+			if (value == null) {
+				return false;
+			}
+
+			return types.contains(value.getClass());
+		}
 	}
 }

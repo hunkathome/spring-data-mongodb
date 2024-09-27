@@ -1,5 +1,5 @@
 /*
- * Copyright 2010-2023 the original author or authors.
+ * Copyright 2010-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import java.util.List;
 
 import org.bson.Document;
 import org.bson.codecs.configuration.CodecRegistry;
+
 import org.springframework.data.mapping.model.SpELExpressionEvaluator;
 import org.springframework.data.mongodb.core.ExecutableFindOperation.ExecutableFind;
 import org.springframework.data.mongodb.core.ExecutableFindOperation.FindWithQuery;
@@ -155,7 +156,7 @@ public abstract class AbstractMongoQuery implements RepositoryQuery {
 	 * @since 4.2
 	 */
 	private Query applyAnnotatedReadPreferenceIfPresent(Query query) {
-		
+
 		if (!method.hasAnnotatedReadPreference()) {
 			return query;
 		}
@@ -323,7 +324,8 @@ public abstract class AbstractMongoQuery implements RepositoryQuery {
 	}
 
 	private AggregationOperation computePipelineStage(String source, ConvertingParameterAccessor accessor) {
-		return ctx -> ctx.getMappedObject(bindParameters(source, accessor), getQueryMethod().getDomainClass());
+		return new StringAggregationOperation(source, getQueryMethod().getDomainClass(),
+				(it) -> bindParameters(it, accessor));
 	}
 
 	protected Document decode(String source, ParameterBindingContext bindingContext) {

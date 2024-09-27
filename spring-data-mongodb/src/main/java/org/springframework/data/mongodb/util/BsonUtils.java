@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2023 the original author or authors.
+ * Copyright 2016-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,9 +20,12 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.StringJoiner;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.stream.StreamSupport;
 
@@ -593,7 +596,7 @@ public class BsonUtils {
 
 		Map<String, Object> source = asMap(bson);
 		if (fieldName.isKey()) {
-			return source.get(fieldName.name()) != null;
+			return source.containsKey(fieldName.name());
 		}
 
 		String[] parts = fieldName.parts();
@@ -714,6 +717,24 @@ public class BsonUtils {
 		}
 
 		return source.getClass().isArray() ? CollectionUtils.arrayToList(source) : Collections.singleton(source);
+	}
+
+	public static Document mapValues(Document source, BiFunction<String, Object, Object> valueMapper) {
+		return mapEntries(source, Entry::getKey, entry -> valueMapper.apply(entry.getKey(), entry.getValue()));
+	}
+
+	public static Document mapEntries(Document source, Function<Entry<String, Object>, String> keyMapper,
+			Function<Entry<String, Object>, Object> valueMapper) {
+
+		if (source.isEmpty()) {
+			return source;
+		}
+
+		Map<String, Object> target = new LinkedHashMap<>(source.size(), 1f);
+		for (Entry<String, Object> entry : source.entrySet()) {
+			target.put(keyMapper.apply(entry), valueMapper.apply(entry));
+		}
+		return new Document(target);
 	}
 
 	@Nullable

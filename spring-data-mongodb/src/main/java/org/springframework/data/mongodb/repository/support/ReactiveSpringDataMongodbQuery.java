@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2023 the original author or authors.
+ * Copyright 2019-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -252,7 +252,7 @@ class ReactiveSpringDataMongodbQuery<K> extends SpringDataMongodbQuerySupport<Re
 	protected Flux<Object> getIds(Class<?> targetType, Mono<Predicate> condition) {
 
 		return condition.flatMapMany(it -> getJoinIds(targetType, it))
-				.switchIfEmpty(Flux.defer(() -> getJoinIds(targetType, (Predicate) null)));
+				.switchIfEmpty(Flux.defer(() -> getJoinIds(targetType, null)));
 	}
 
 	/**

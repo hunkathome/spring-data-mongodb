@@ -1,5 +1,5 @@
 /*
- * Copyright 2010-2023 the original author or authors.
+ * Copyright 2010-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -83,6 +83,21 @@ public class BasicQuery extends Query {
 		this.queryObject = queryObject;
 		this.fieldsObject = fieldsObject;
 		this.sortObject = new Document();
+	}
+
+	/**
+	 * Create a BasicQuery given a {@link Query}. The resulting query is a copy of {@link Query}.
+	 *
+	 * @param query the query to copy.
+	 * @since 4.4
+	 */
+	public BasicQuery(Query query) {
+
+		super(query);
+		this.queryObject = query.getQueryObject();
+		this.setFieldsObject(query.getFieldsObject());
+		this.setSortObject(query.getSortObject());
+		this.setMeta(query.getMeta());
 	}
 
 	@Override

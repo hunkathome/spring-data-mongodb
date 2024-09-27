@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2023 the original author or authors.
+ * Copyright 2016-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -542,7 +542,7 @@ public class AccumulatorOperators {
 		}
 
 		/**
-		 * Creates new {@link Max} that returns the given number of maxmimum values ({@literal $maxN}).
+		 * Creates new {@link Max} that returns the given number of maximum values ({@literal $maxN}).
 		 * <strong>NOTE</strong>: Cannot be used with more than one {@literal input} value.
 		 *
 		 * @param numberOfResults

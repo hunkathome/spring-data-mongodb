@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2023 the original author or authors.
+ * Copyright 2014-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -244,7 +244,7 @@ abstract class GeoConverters {
 	 * @since 1.5
 	 */
 	@ReadingConverter
-	static enum DocumentToCircleConverter implements Converter<Document, Circle> {
+	enum DocumentToCircleConverter implements Converter<Document, Circle> {
 
 		INSTANCE;
 
@@ -281,7 +281,7 @@ abstract class GeoConverters {
 	 * @author Thomas Darimont
 	 * @since 1.5
 	 */
-	static enum SphereToDocumentConverter implements Converter<Sphere, Document> {
+	enum SphereToDocumentConverter implements Converter<Sphere, Document> {
 
 		INSTANCE;
 
@@ -591,7 +591,7 @@ abstract class GeoConverters {
 	 * @author Christoph Strobl
 	 * @since 1.7
 	 */
-	static enum DocumentToGeoJsonMultiPolygonConverter implements Converter<Document, GeoJsonMultiPolygon> {
+	enum DocumentToGeoJsonMultiPolygonConverter implements Converter<Document, GeoJsonMultiPolygon> {
 
 		INSTANCE;
 

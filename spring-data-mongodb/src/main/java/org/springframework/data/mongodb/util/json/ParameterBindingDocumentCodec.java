@@ -1,5 +1,5 @@
 /*
- * Copyright 2008-2023 the original author or authors.
+ * Copyright 2008-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,7 +40,8 @@ import org.bson.Transformer;
 import org.bson.codecs.*;
 import org.bson.codecs.configuration.CodecRegistry;
 import org.bson.json.JsonParseException;
-import org.springframework.data.mapping.model.SpELExpressionEvaluator;
+
+import org.springframework.data.mapping.model.ValueExpressionEvaluator;
 import org.springframework.data.mongodb.core.mapping.FieldName;
 import org.springframework.data.spel.EvaluationContextProvider;
 import org.springframework.data.spel.ExpressionDependencies;
@@ -384,7 +385,7 @@ public class ParameterBindingDocumentCodec implements CollectibleCodec<Document>
 	 * @author Christoph Strobl
 	 * @since 3.1
 	 */
-	static class DependencyCapturingExpressionEvaluator implements SpELExpressionEvaluator {
+	static class DependencyCapturingExpressionEvaluator implements ValueExpressionEvaluator {
 
 		private static final Object PLACEHOLDER = new Object();
 

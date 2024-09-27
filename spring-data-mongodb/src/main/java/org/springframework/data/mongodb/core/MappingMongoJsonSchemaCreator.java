@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2023 the original author or authors.
+ * Copyright 2019-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -99,7 +99,7 @@ class MappingMongoJsonSchemaCreator implements MongoJsonSchemaCreator {
 	}
 
 	/**
-	 * Specify additional types to be considered wehen rendering the schema for the given path.
+	 * Specify additional types to be considered when rendering the schema for the given path.
 	 *
 	 * @param path path the path using {@literal dot '.'} notation.
 	 * @param types must not be {@literal null}.

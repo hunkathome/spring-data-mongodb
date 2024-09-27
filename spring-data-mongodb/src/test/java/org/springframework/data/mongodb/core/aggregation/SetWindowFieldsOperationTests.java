@@ -1,5 +1,5 @@
 /*
- * Copyright 2021-2023 the original author or authors.
+ * Copyright 2021-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -68,6 +68,29 @@ class SetWindowFieldsOperationTests {
 
 		AggregationResults<Document> results = mongoTemplate.aggregateAndReturn(Document.class)
 				.by(Aggregation.newAggregation(CakeSale.class, setWindowFieldsOperation)).all();
+
+		assertThat(results.getMappedResults()).map(it -> it.get("cumulativeQuantityForState")).contains(162, 282, 427, 134,
+				238, 378);
+	}
+
+	@Test // GH-4745
+	void exposesFieldsToNextStageCorrectly() {
+
+		initCakeSales();
+
+		SetWindowFieldsOperation setWindowFieldsOperation = SetWindowFieldsOperation.builder() //
+				.partitionByField("state") // resolves to field ref "$state"
+				.sortBy(Sort.by(Direction.ASC, "date")) // resolves to "orderDate"
+				.output(AccumulatorOperators.valueOf("qty").sum()) // resolves to "$quantity"
+				.within(Windows.documents().fromUnbounded().toCurrent().build()) //
+				.as("cumulativeQuantityForState") //
+				.build(); //
+
+		AggregationResults<Document> results = mongoTemplate.aggregateAndReturn(Document.class)
+				.by(Aggregation.newAggregation(CakeSale.class, setWindowFieldsOperation,
+						/* and now project on the field to see it can be referenced */
+						Aggregation.project("cumulativeQuantityForState")))
+				.all();
 
 		assertThat(results.getMappedResults()).map(it -> it.get("cumulativeQuantityForState")).contains(162, 282, 427, 134,
 				238, 378);

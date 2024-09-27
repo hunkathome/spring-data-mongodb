@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 the original author or authors.
+ * Copyright 2023-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -216,7 +216,7 @@ class DefaultReactiveBulkOperations extends BulkOperationsSupport implements Rea
 			collection = collection.withWriteConcern(defaultWriteConcern);
 		}
 
-		Flux<SourceAwareWriteModelHolder> concat = Flux.concat(models).flatMap(it -> {
+		Flux<SourceAwareWriteModelHolder> concat = Flux.concat(models).flatMapSequential(it -> {
 
 			if (it.model()instanceof InsertOneModel<Document> iom) {
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 the original author or authors.
+ * Copyright 2023-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
  */
 package org.springframework.data.mongodb.repository.support;
 
+import java.lang.reflect.AnnotatedElement;
 import java.lang.reflect.Method;
 import java.util.HashSet;
 import java.util.Optional;
@@ -89,8 +90,11 @@ class CrudMethodMetadataPostProcessor implements RepositoryProxyPostProcessor, B
 
 		private final ConcurrentMap<Method, CrudMethodMetadata> metadataCache = new ConcurrentHashMap<>();
 		private final Set<Method> implementations = new HashSet<>();
+		private final RepositoryInformation repositoryInformation;
 
 		CrudMethodMetadataPopulatingMethodInterceptor(RepositoryInformation repositoryInformation) {
+
+			this.repositoryInformation = repositoryInformation;
 
 			ReflectionUtils.doWithMethods(repositoryInformation.getRepositoryInterface(), implementations::add,
 					method -> !repositoryInformation.isQueryMethod(method));
@@ -140,7 +144,7 @@ class CrudMethodMetadataPostProcessor implements RepositoryProxyPostProcessor, B
 
 				if (methodMetadata == null) {
 
-					methodMetadata = new DefaultCrudMethodMetadata(method);
+					methodMetadata = new DefaultCrudMethodMetadata(repositoryInformation.getRepositoryInterface(), method);
 					CrudMethodMetadata tmp = metadataCache.putIfAbsent(method, methodMetadata);
 
 					if (tmp != null) {
@@ -171,32 +175,30 @@ class CrudMethodMetadataPostProcessor implements RepositoryProxyPostProcessor, B
 		/**
 		 * Creates a new {@link DefaultCrudMethodMetadata} for the given {@link Method}.
 		 *
+		 * @param repositoryInterface the target repository interface.
 		 * @param method must not be {@literal null}.
 		 */
-		DefaultCrudMethodMetadata(Method method) {
+		DefaultCrudMethodMetadata(Class<?> repositoryInterface, Method method) {
 
+			Assert.notNull(repositoryInterface, "Repository interface must not be null");
 			Assert.notNull(method, "Method must not be null");
 
-			this.readPreference = findReadPreference(method);
+			this.readPreference = findReadPreference(method, repositoryInterface);
 		}
 
-		private Optional<ReadPreference> findReadPreference(Method method) {
+		private static Optional<ReadPreference> findReadPreference(AnnotatedElement... annotatedElements) {
 
-			org.springframework.data.mongodb.repository.ReadPreference preference = AnnotatedElementUtils
-					.findMergedAnnotation(method, org.springframework.data.mongodb.repository.ReadPreference.class);
+			for (AnnotatedElement element : annotatedElements) {
 
-			if (preference == null) {
+				org.springframework.data.mongodb.repository.ReadPreference preference = AnnotatedElementUtils
+						.findMergedAnnotation(element, org.springframework.data.mongodb.repository.ReadPreference.class);
 
-				preference = AnnotatedElementUtils.findMergedAnnotation(method.getDeclaringClass(),
-						org.springframework.data.mongodb.repository.ReadPreference.class);
+				if (preference != null) {
+					return Optional.of(com.mongodb.ReadPreference.valueOf(preference.value()));
+				}
 			}
 
-			if (preference == null) {
-				return Optional.empty();
-			}
-
-			return Optional.of(com.mongodb.ReadPreference.valueOf(preference.value()));
-
+			return Optional.empty();
 		}
 
 		@Override

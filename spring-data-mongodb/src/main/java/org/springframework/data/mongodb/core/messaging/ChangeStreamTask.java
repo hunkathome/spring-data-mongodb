@@ -1,5 +1,5 @@
 /*
- * Copyright 2018-2023 the original author or authors.
+ * Copyright 2018-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,7 +37,6 @@ import org.springframework.data.mongodb.core.aggregation.TypeBasedAggregationOpe
 import org.springframework.data.mongodb.core.aggregation.TypedAggregation;
 import org.springframework.data.mongodb.core.convert.MongoConverter;
 import org.springframework.data.mongodb.core.convert.QueryMapper;
-import org.springframework.data.mongodb.core.messaging.ChangeStreamRequest.ChangeStreamRequestOptions;
 import org.springframework.data.mongodb.core.messaging.Message.MessageProperties;
 import org.springframework.data.mongodb.core.messaging.SubscriptionRequest.RequestOptions;
 import org.springframework.lang.Nullable;
@@ -88,13 +87,13 @@ class ChangeStreamTask extends CursorReadingTask<ChangeStreamDocument<Document>,
 		Collation collation = null;
 		FullDocument fullDocument = ClassUtils.isAssignable(Document.class, targetType) ? FullDocument.DEFAULT
 				: FullDocument.UPDATE_LOOKUP;
-		FullDocumentBeforeChange fullDocumentBeforeChange = FullDocumentBeforeChange.DEFAULT;
+		FullDocumentBeforeChange fullDocumentBeforeChange = null;
 		BsonTimestamp startAt = null;
 		boolean resumeAfter = true;
 
-		if (options instanceof ChangeStreamRequest.ChangeStreamRequestOptions changeStreamRequestOptions) {
+		if (options instanceof ChangeStreamRequest.ChangeStreamRequestOptions requestOptions) {
 
-			ChangeStreamOptions changeStreamOptions = changeStreamRequestOptions.getChangeStreamOptions();
+			ChangeStreamOptions changeStreamOptions = requestOptions.getChangeStreamOptions();
 			filter = prepareFilter(template, changeStreamOptions);
 
 			if (changeStreamOptions.getFilter().isPresent()) {
@@ -116,8 +115,7 @@ class ChangeStreamTask extends CursorReadingTask<ChangeStreamDocument<Document>,
 					.orElseGet(() -> ClassUtils.isAssignable(Document.class, targetType) ? FullDocument.DEFAULT
 							: FullDocument.UPDATE_LOOKUP);
 
-			fullDocumentBeforeChange = changeStreamOptions.getFullDocumentBeforeChangeLookup()
-					.orElse(FullDocumentBeforeChange.DEFAULT);
+			fullDocumentBeforeChange = changeStreamOptions.getFullDocumentBeforeChangeLookup().orElse(null);
 
 			startAt = changeStreamOptions.getResumeBsonTimestamp().orElse(null);
 		}
@@ -158,7 +156,9 @@ class ChangeStreamTask extends CursorReadingTask<ChangeStreamDocument<Document>,
 		}
 
 		iterable = iterable.fullDocument(fullDocument);
-		iterable = iterable.fullDocumentBeforeChange(fullDocumentBeforeChange);
+		if(fullDocumentBeforeChange != null) {
+			iterable = iterable.fullDocumentBeforeChange(fullDocumentBeforeChange);
+		}
 
 		return iterable.iterator();
 	}

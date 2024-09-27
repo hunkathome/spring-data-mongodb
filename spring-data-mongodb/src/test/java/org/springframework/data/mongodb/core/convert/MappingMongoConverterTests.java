@@ -1,5 +1,5 @@
 /*
- * Copyright 2018-2023 the original author or authors.
+ * Copyright 2018-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 import org.bson.Document;
 import org.junit.jupiter.api.BeforeEach;
@@ -79,8 +80,7 @@ public class MappingMongoConverterTests {
 
 		mappingContext = new MongoMappingContext();
 		mappingContext.setSimpleTypeHolder(new MongoCustomConversions(Collections.emptyList()).getSimpleTypeHolder());
-		mappingContext.setInitialEntitySet(new HashSet<>(
-				Arrays.asList(WithLazyDBRefAsConstructorArg.class, WithLazyDBRef.class, WithJavaTimeTypes.class)));
+		mappingContext.setInitialEntitySet(Set.of(WithLazyDBRefAsConstructorArg.class, WithLazyDBRef.class, WithJavaTimeTypes.class));
 		mappingContext.setAutoIndexCreation(false);
 		mappingContext.afterPropertiesSet();
 

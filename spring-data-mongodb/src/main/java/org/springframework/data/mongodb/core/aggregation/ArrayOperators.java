@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2023 the original author or authors.
+ * Copyright 2016-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -523,7 +523,7 @@ public class ArrayOperators {
 		}
 
 		/**
-		 * Use the element at the index number traken from the given field.
+		 * Use the element at the index number taken from the given field.
 		 *
 		 * @param arrayFieldReference the field name.
 		 * @return new instance of {@link ArrayElemAt}.
@@ -655,7 +655,7 @@ public class ArrayOperators {
 		}
 
 		/**
-		 * Set the {@link AggregationExpression} resolving to an arry to apply the {@code $filter} to.
+		 * Set the {@link AggregationExpression} resolving to an array to apply the {@code $filter} to.
 		 *
 		 * @param expression must not be {@literal null}.
 		 * @return never {@literal null}.
@@ -687,8 +687,7 @@ public class ArrayOperators {
 		private Document toFilter(ExposedFields exposedFields, AggregationOperationContext context) {
 
 			Document filterExpression = new Document();
-			InheritingExposedFieldsAggregationOperationContext operationContext = new InheritingExposedFieldsAggregationOperationContext(
-					exposedFields, context);
+			AggregationOperationContext operationContext = context.inheritAndExpose(exposedFields);
 
 			filterExpression.putAll(context.getMappedObject(new Document("input", getMappedInput(context))));
 			filterExpression.put("as", as.getTarget());

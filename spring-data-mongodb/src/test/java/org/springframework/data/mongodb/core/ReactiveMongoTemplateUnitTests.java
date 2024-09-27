@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2023 the original author or authors.
+ * Copyright 2016-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,8 +20,6 @@ import static org.mockito.Mockito.*;
 import static org.springframework.data.mongodb.core.aggregation.Aggregation.*;
 import static org.springframework.data.mongodb.test.util.Assertions.assertThat;
 
-import com.mongodb.WriteConcern;
-import org.springframework.data.mongodb.core.MongoTemplateUnitTests.Sith;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
@@ -36,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
 import org.assertj.core.api.Assertions;
@@ -101,6 +100,7 @@ import org.springframework.util.CollectionUtils;
 import com.mongodb.MongoClientSettings;
 import com.mongodb.ReadConcern;
 import com.mongodb.ReadPreference;
+import com.mongodb.WriteConcern;
 import com.mongodb.client.model.CountOptions;
 import com.mongodb.client.model.CreateCollectionOptions;
 import com.mongodb.client.model.DeleteOptions;
@@ -110,6 +110,7 @@ import com.mongodb.client.model.FindOneAndUpdateOptions;
 import com.mongodb.client.model.ReplaceOptions;
 import com.mongodb.client.model.TimeSeriesGranularity;
 import com.mongodb.client.model.UpdateOptions;
+import com.mongodb.client.model.changestream.FullDocumentBeforeChange;
 import com.mongodb.client.result.DeleteResult;
 import com.mongodb.client.result.InsertManyResult;
 import com.mongodb.client.result.InsertOneResult;
@@ -131,7 +132,9 @@ import com.mongodb.reactivestreams.client.MongoDatabase;
  * @author Roman Puchkovskiy
  * @author Mathieu Ouellet
  * @author Yadhukrishna S Pai
+ * @author Ben Foster
  */
+@SuppressWarnings({ "unchecked", "rawtypes" })
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 public class ReactiveMongoTemplateUnitTests {
@@ -367,7 +370,8 @@ public class ReactiveMongoTemplateUnitTests {
 	@Test // GH-3218
 	void updateUsesHintDocumentFromQuery() {
 
-		template.updateFirst(new Query().withHint("{ firstname : 1 }"), new Update().set("spring", "data"), Person.class).subscribe();
+		template.updateFirst(new Query().withHint("{ firstname : 1 }"), new Update().set("spring", "data"), Person.class)
+				.subscribe();
 
 		ArgumentCaptor<UpdateOptions> options = ArgumentCaptor.forClass(UpdateOptions.class);
 		verify(collection).updateOne(any(Bson.class), any(Bson.class), options.capture());
@@ -694,6 +698,28 @@ public class ReactiveMongoTemplateUnitTests {
 				Document.class).subscribe();
 
 		verify(collection).withReadPreference(ReadPreference.primaryPreferred());
+	}
+
+	@Test // GH-4543
+	void aggregateDoesNotLimitBackpressure() {
+
+		reset(collection);
+
+		AtomicLong request = new AtomicLong();
+		Publisher<Document> realPublisher = Flux.just(new Document()).doOnRequest(request::addAndGet);
+
+		doAnswer(invocation -> {
+			Subscriber<Document> subscriber = invocation.getArgument(0);
+			realPublisher.subscribe(subscriber);
+			return null;
+		}).when(aggregatePublisher).subscribe(any());
+
+		when(collection.aggregate(anyList())).thenReturn(aggregatePublisher);
+		when(collection.aggregate(anyList(), any(Class.class))).thenReturn(aggregatePublisher);
+
+		template.aggregate(newAggregation(Sith.class, project("id")), AutogenerateableId.class, Document.class).subscribe();
+
+		assertThat(request).hasValueGreaterThan(128);
 	}
 
 	@Test // DATAMONGO-1854
@@ -1260,6 +1286,17 @@ public class ReactiveMongoTemplateUnitTests {
 		assertThat(results.get(0).id).isEqualTo("after-convert");
 	}
 
+	@Test // GH-4543
+	void findShouldNotLimitBackpressure() {
+
+		AtomicLong request = new AtomicLong();
+		stubFindSubscribe(new Document(), request);
+
+		template.find(new Query(), Person.class).subscribe();
+
+		assertThat(request).hasValueGreaterThan(128);
+	}
+
 	@Test // DATAMONGO-2479
 	void findByIdShouldInvokeAfterConvertCallbacks() {
 
@@ -1604,6 +1641,25 @@ public class ReactiveMongoTemplateUnitTests {
 		verify(changeStreamPublisher).startAfter(eq(token));
 	}
 
+	@Test // GH-4495
+	void changeStreamOptionFullDocumentBeforeChangeShouldBeApplied() {
+
+		when(factory.getMongoDatabase(anyString())).thenReturn(Mono.just(db));
+
+		when(collection.watch(any(Class.class))).thenReturn(changeStreamPublisher);
+		when(changeStreamPublisher.batchSize(anyInt())).thenReturn(changeStreamPublisher);
+		when(changeStreamPublisher.startAfter(any())).thenReturn(changeStreamPublisher);
+		when(changeStreamPublisher.fullDocument(any())).thenReturn(changeStreamPublisher);
+		when(changeStreamPublisher.fullDocumentBeforeChange(any())).thenReturn(changeStreamPublisher);
+
+		ChangeStreamOptions options = ChangeStreamOptions.builder()
+				.fullDocumentBeforeChangeLookup(FullDocumentBeforeChange.REQUIRED).build();
+		template.changeStream("database", "collection", options, Object.class).subscribe();
+
+		verify(changeStreamPublisher).fullDocumentBeforeChange(FullDocumentBeforeChange.REQUIRED);
+
+	}
+
 	@Test // GH-4462
 	void replaceShouldUseCollationWhenPresent() {
 
@@ -1632,7 +1688,8 @@ public class ReactiveMongoTemplateUnitTests {
 	@Test // GH-4462
 	void replaceShouldUpsert() {
 
-		template.replace(new BasicQuery("{}"), new MongoTemplateUnitTests.Sith(), org.springframework.data.mongodb.core.ReplaceOptions.replaceOptions().upsert()).subscribe();
+		template.replace(new BasicQuery("{}"), new MongoTemplateUnitTests.Sith(),
+				org.springframework.data.mongodb.core.ReplaceOptions.replaceOptions().upsert()).subscribe();
 
 		ArgumentCaptor<com.mongodb.client.model.ReplaceOptions> options = ArgumentCaptor
 				.forClass(com.mongodb.client.model.ReplaceOptions.class);
@@ -1644,7 +1701,8 @@ public class ReactiveMongoTemplateUnitTests {
 	@Test // GH-4462
 	void replaceShouldUseDefaultCollationWhenPresent() {
 
-		template.replace(new BasicQuery("{}"), new MongoTemplateUnitTests.Sith(), org.springframework.data.mongodb.core.ReplaceOptions.replaceOptions()).subscribe();
+		template.replace(new BasicQuery("{}"), new MongoTemplateUnitTests.Sith(),
+				org.springframework.data.mongodb.core.ReplaceOptions.replaceOptions()).subscribe();
 
 		ArgumentCaptor<com.mongodb.client.model.ReplaceOptions> options = ArgumentCaptor
 				.forClass(com.mongodb.client.model.ReplaceOptions.class);
@@ -1656,7 +1714,8 @@ public class ReactiveMongoTemplateUnitTests {
 	@Test // GH-4462
 	void replaceShouldUseHintIfPresent() {
 
-		template.replace(new BasicQuery("{}").withHint("index-to-use"), new MongoTemplateUnitTests.Sith(), org.springframework.data.mongodb.core.ReplaceOptions.replaceOptions().upsert()).subscribe();
+		template.replace(new BasicQuery("{}").withHint("index-to-use"), new MongoTemplateUnitTests.Sith(),
+				org.springframework.data.mongodb.core.ReplaceOptions.replaceOptions().upsert()).subscribe();
 
 		ArgumentCaptor<com.mongodb.client.model.ReplaceOptions> options = ArgumentCaptor
 				.forClass(com.mongodb.client.model.ReplaceOptions.class);
@@ -1676,14 +1735,75 @@ public class ReactiveMongoTemplateUnitTests {
 			}
 		});
 
-		template.replace(new BasicQuery("{}").withHint("index-to-use"), new Sith(), org.springframework.data.mongodb.core.ReplaceOptions.replaceOptions().upsert()).subscribe();
+		template.replace(new BasicQuery("{}").withHint("index-to-use"), new Sith(),
+				org.springframework.data.mongodb.core.ReplaceOptions.replaceOptions().upsert()).subscribe();
 
 		verify(collection).withWriteConcern(eq(WriteConcern.UNACKNOWLEDGED));
 	}
 
-	private void stubFindSubscribe(Document document) {
+	@Test // GH-4099
+	void createCollectionShouldSetUpTimeSeriesWithExpirationFromString() {
 
-		Publisher<Document> realPublisher = Flux.just(document);
+		template.createCollection(TimeSeriesTypeWithExpireAfterAsPlainString.class).subscribe();
+
+		ArgumentCaptor<CreateCollectionOptions> options = ArgumentCaptor.forClass(CreateCollectionOptions.class);
+		verify(db).createCollection(any(), options.capture());
+
+		assertThat(options.getValue().getExpireAfter(TimeUnit.MINUTES))
+				.isEqualTo(10);
+	}
+
+	@Test // GH-4099
+	void createCollectionShouldSetUpTimeSeriesWithExpirationFromIso8601String() {
+
+		template.createCollection(TimeSeriesTypeWithExpireAfterAsIso8601Style.class).subscribe();
+
+		ArgumentCaptor<CreateCollectionOptions> options = ArgumentCaptor.forClass(CreateCollectionOptions.class);
+		verify(db).createCollection(any(), options.capture());
+
+		assertThat(options.getValue().getExpireAfter(TimeUnit.DAYS))
+				.isEqualTo(1);
+	}
+
+	@Test // GH-4099
+	void createCollectionShouldSetUpTimeSeriesWithExpirationFromExpression() {
+
+		template.createCollection(TimeSeriesTypeWithExpireAfterAsExpression.class).subscribe();
+
+		ArgumentCaptor<CreateCollectionOptions> options = ArgumentCaptor.forClass(CreateCollectionOptions.class);
+		verify(db).createCollection(any(), options.capture());
+
+		assertThat(options.getValue().getExpireAfter(TimeUnit.SECONDS))
+				.isEqualTo(11);
+	}
+
+	@Test // GH-4099
+	void createCollectionShouldSetUpTimeSeriesWithExpirationFromExpressionReturningDuration() {
+
+		template.createCollection(TimeSeriesTypeWithExpireAfterAsExpressionResultingInDuration.class).subscribe();
+
+		ArgumentCaptor<CreateCollectionOptions> options = ArgumentCaptor.forClass(CreateCollectionOptions.class);
+		verify(db).createCollection(any(), options.capture());
+
+		assertThat(options.getValue().getExpireAfter(TimeUnit.SECONDS))
+				.isEqualTo(100);
+	}
+
+	@Test // GH-4099
+	void createCollectionShouldSetUpTimeSeriesWithInvalidTimeoutExpiration() {
+
+		assertThatExceptionOfType(IllegalArgumentException.class).isThrownBy(() ->
+			template.createCollection(TimeSeriesTypeWithInvalidExpireAfter.class).subscribe()
+		);
+	}
+
+	private void stubFindSubscribe(Document document) {
+		stubFindSubscribe(document, new AtomicLong());
+	}
+
+	private void stubFindSubscribe(Document document, AtomicLong request) {
+
+		Publisher<Document> realPublisher = Flux.just(document).doOnRequest(request::addAndGet);
 
 		doAnswer(invocation -> {
 			Subscriber<Document> subscriber = invocation.getArgument(0);
@@ -1823,6 +1943,41 @@ public class ReactiveMongoTemplateUnitTests {
 
 		@Field("time_stamp") Instant timestamp;
 		Object meta;
+	}
+
+	@TimeSeries(timeField = "timestamp", expireAfter = "10m")
+	static class TimeSeriesTypeWithExpireAfterAsPlainString {
+
+		String id;
+		Instant timestamp;
+	}
+
+	@TimeSeries(timeField = "timestamp", expireAfter = "P1D")
+	static class TimeSeriesTypeWithExpireAfterAsIso8601Style {
+
+		String id;
+		Instant timestamp;
+	}
+
+	@TimeSeries(timeField = "timestamp", expireAfter = "#{10 + 1 + 's'}")
+	static class TimeSeriesTypeWithExpireAfterAsExpression {
+
+		String id;
+		Instant timestamp;
+	}
+
+	@TimeSeries(timeField = "timestamp", expireAfter = "#{T(java.time.Duration).ofSeconds(100)}")
+	static class TimeSeriesTypeWithExpireAfterAsExpressionResultingInDuration {
+
+		String id;
+		Instant timestamp;
+	}
+
+	@TimeSeries(timeField = "timestamp", expireAfter = "123ops")
+	static class TimeSeriesTypeWithInvalidExpireAfter {
+
+		String id;
+		Instant timestamp;
 	}
 
 	static class ValueCapturingEntityCallback<T> {

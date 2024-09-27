@@ -5,6 +5,7 @@
 *** xref:migration-guide/migration-guide-3.x-to-4.x.adoc[]
 
 * xref:mongodb.adoc[]
+** xref:preface.adoc[]
 ** xref:mongodb/getting-started.adoc[]
 ** xref:mongodb/configuration.adoc[]
 
@@ -25,6 +26,7 @@
 *** xref:mongodb/mapping/document-references.adoc[Object References]
 *** xref:mongodb/mapping/mapping-index-management.adoc[]
 
+** xref:mongodb/value-expressions.adoc[]
 ** xref:mongodb/lifecycle-events.adoc[]
 ** xref:mongodb/auditing.adoc[]
 ** xref:mongodb/client-session-transactions.adoc[]
@@ -61,4 +63,7 @@
 ** xref:kotlin/null-safety.adoc[]
 ** xref:kotlin/extensions.adoc[]
 ** xref:kotlin/coroutines.adoc[]
+
+* xref:attachment$api/java/index.html[Javadoc,role=link-external,window=_blank]
+* https://github.com/spring-projects/spring-data-commons/wiki[Wiki,role=link-external,window=_blank]
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2010-2023 the original author or authors.
+ * Copyright 2010-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,6 +48,7 @@ import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationListener;
@@ -99,6 +100,7 @@ import org.springframework.data.mongodb.core.timeseries.Granularity;
 import org.springframework.data.mongodb.util.BsonUtils;
 import org.springframework.data.projection.SpelAwareProxyProjectionFactory;
 import org.springframework.lang.Nullable;
+import org.springframework.mock.env.MockEnvironment;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.util.CollectionUtils;
 
@@ -118,7 +120,15 @@ import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoCursor;
 import com.mongodb.client.MongoDatabase;
-import com.mongodb.client.model.*;
+import com.mongodb.client.model.CountOptions;
+import com.mongodb.client.model.CreateCollectionOptions;
+import com.mongodb.client.model.DeleteOptions;
+import com.mongodb.client.model.FindOneAndDeleteOptions;
+import com.mongodb.client.model.FindOneAndReplaceOptions;
+import com.mongodb.client.model.FindOneAndUpdateOptions;
+import com.mongodb.client.model.MapReduceAction;
+import com.mongodb.client.model.TimeSeriesGranularity;
+import com.mongodb.client.model.UpdateOptions;
 import com.mongodb.client.result.DeleteResult;
 import com.mongodb.client.result.UpdateResult;
 
@@ -132,6 +142,7 @@ import com.mongodb.client.result.UpdateResult;
  * @author Roman Puchkovskiy
  * @author Yadhukrishna S Pai
  * @author Jakub Zurawa
+ * @author Ben Foster
  */
 @MockitoSettings(strictness = Strictness.LENIENT)
 public class MongoTemplateUnitTests extends MongoOperationsUnitTests {
@@ -156,6 +167,7 @@ public class MongoTemplateUnitTests extends MongoOperationsUnitTests {
 	private MongoExceptionTranslator exceptionTranslator = new MongoExceptionTranslator();
 	private MappingMongoConverter converter;
 	private MongoMappingContext mappingContext;
+	private MockEnvironment environment = new MockEnvironment();
 
 	@BeforeEach
 	void beforeEach() {
@@ -204,10 +216,12 @@ public class MongoTemplateUnitTests extends MongoOperationsUnitTests {
 
 		this.mappingContext = new MongoMappingContext();
 		mappingContext.setAutoIndexCreation(true);
+		mappingContext.setEnvironment(environment);
 		mappingContext.setSimpleTypeHolder(new MongoCustomConversions(Collections.emptyList()).getSimpleTypeHolder());
 		mappingContext.afterPropertiesSet();
 
 		this.converter = spy(new MappingMongoConverter(new DefaultDbRefResolver(factory), mappingContext));
+		when(this.converter.getEnvironment()).thenReturn(environment);
 		converter.afterPropertiesSet();
 		this.template = new MongoTemplate(factory, converter);
 	}
@@ -498,6 +512,17 @@ public class MongoTemplateUnitTests extends MongoOperationsUnitTests {
 		verify(collection).withReadPreference(ReadPreference.secondary());
 	}
 
+	@Test // GH-4644
+	void aggregateStreamShouldHonorMaxTimeIfSet() {
+
+		AggregationOptions options = AggregationOptions.builder().maxTime(Duration.ofSeconds(20)).build();
+
+		template.aggregateStream(newAggregation(Aggregation.unwind("foo")).withOptions(options), "collection-1",
+				Wrapper.class);
+
+		verify(aggregateIterable).maxTime(20000, TimeUnit.MILLISECONDS);
+	}
+
 	@Test // DATAMONGO-2153
 	void aggregateShouldHonorOptionsComment() {
 
@@ -538,7 +563,7 @@ public class MongoTemplateUnitTests extends MongoOperationsUnitTests {
 			protected <O> AggregationResults<O> doAggregate(Aggregation aggregation, String collectionName,
 					Class<O> outputType, AggregationOperationContext context) {
 
-				assertThat(context).isInstanceOf(RelaxedTypeBasedAggregationOperationContext.class);
+				assertThat(ReflectionTestUtils.getField(context, "lookupPolicy")).isEqualTo(FieldLookupPolicy.relaxed());
 				return super.doAggregate(aggregation, collectionName, outputType, context);
 			}
 		};
@@ -2366,6 +2391,76 @@ public class MongoTemplateUnitTests extends MongoOperationsUnitTests {
 						.granularity(TimeSeriesGranularity.HOURS).toString());
 	}
 
+	@Test // GH-4099
+	void createCollectionShouldSetUpTimeSeriesWithExpirationFromString() {
+
+		template.createCollection(TimeSeriesTypeWithExpireAfterAsPlainString.class);
+
+		ArgumentCaptor<CreateCollectionOptions> options = ArgumentCaptor.forClass(CreateCollectionOptions.class);
+		verify(db).createCollection(any(), options.capture());
+
+		assertThat(options.getValue().getExpireAfter(TimeUnit.MINUTES))
+				.isEqualTo(10);
+	}
+
+	@Test // GH-4099
+	void createCollectionShouldSetUpTimeSeriesWithExpirationFromProperty() {
+
+		environment.setProperty("my.timeout", "12m");
+
+		template.createCollection(TimeSeriesTypeWithExpireAfterFromProperty.class);
+
+		ArgumentCaptor<CreateCollectionOptions> options = ArgumentCaptor.forClass(CreateCollectionOptions.class);
+		verify(db).createCollection(any(), options.capture());
+
+		assertThat(options.getValue().getExpireAfter(TimeUnit.MINUTES))
+			.isEqualTo(12);
+	}
+
+	@Test // GH-4099
+	void createCollectionShouldSetUpTimeSeriesWithExpirationFromIso8601String() {
+
+		template.createCollection(TimeSeriesTypeWithExpireAfterAsIso8601Style.class);
+
+		ArgumentCaptor<CreateCollectionOptions> options = ArgumentCaptor.forClass(CreateCollectionOptions.class);
+		verify(db).createCollection(any(), options.capture());
+
+		assertThat(options.getValue().getExpireAfter(TimeUnit.DAYS))
+				.isEqualTo(1);
+	}
+
+	@Test // GH-4099
+	void createCollectionShouldSetUpTimeSeriesWithExpirationFromExpression() {
+
+		template.createCollection(TimeSeriesTypeWithExpireAfterAsExpression.class);
+
+		ArgumentCaptor<CreateCollectionOptions> options = ArgumentCaptor.forClass(CreateCollectionOptions.class);
+		verify(db).createCollection(any(), options.capture());
+
+		assertThat(options.getValue().getExpireAfter(TimeUnit.SECONDS))
+				.isEqualTo(11);
+	}
+
+	@Test // GH-4099
+	void createCollectionShouldSetUpTimeSeriesWithExpirationFromExpressionReturningDuration() {
+
+		template.createCollection(TimeSeriesTypeWithExpireAfterAsExpressionResultingInDuration.class);
+
+		ArgumentCaptor<CreateCollectionOptions> options = ArgumentCaptor.forClass(CreateCollectionOptions.class);
+		verify(db).createCollection(any(), options.capture());
+
+		assertThat(options.getValue().getExpireAfter(TimeUnit.SECONDS))
+				.isEqualTo(100);
+	}
+
+	@Test // GH-4099
+	void createCollectionShouldSetUpTimeSeriesWithInvalidTimeoutExpiration() {
+
+		assertThatExceptionOfType(IllegalArgumentException.class).isThrownBy(() ->
+				template.createCollection(TimeSeriesTypeWithInvalidExpireAfter.class)
+		);
+	}
+
 	@Test // GH-3522
 	void usedCountDocumentsForEmptyQueryByDefault() {
 
@@ -2489,7 +2584,8 @@ public class MongoTemplateUnitTests extends MongoOperationsUnitTests {
 	@Test // GH-4462
 	void replaceShouldUseHintIfPresent() {
 
-		template.replace(new BasicQuery("{}").withHint("index-to-use"), new Sith(), ReplaceOptions.replaceOptions().upsert());
+		template.replace(new BasicQuery("{}").withHint("index-to-use"), new Sith(),
+				ReplaceOptions.replaceOptions().upsert());
 
 		ArgumentCaptor<com.mongodb.client.model.ReplaceOptions> options = ArgumentCaptor
 				.forClass(com.mongodb.client.model.ReplaceOptions.class);
@@ -2509,12 +2605,38 @@ public class MongoTemplateUnitTests extends MongoOperationsUnitTests {
 			}
 		});
 
-		template.replace(new BasicQuery("{}").withHint("index-to-use"), new Sith(), ReplaceOptions.replaceOptions().upsert());
+		template.replace(new BasicQuery("{}").withHint("index-to-use"), new Sith(),
+				ReplaceOptions.replaceOptions().upsert());
 
 		verify(collection).withWriteConcern(eq(WriteConcern.UNACKNOWLEDGED));
 	}
 
-	class AutogenerateableId {
+    @Test // GH-4099
+    void passOnTimeSeriesExpireOption() {
+
+        template.createCollection("time-series-collection",
+            CollectionOptions.timeSeries("time_stamp", options -> options.expireAfter(Duration.ofSeconds(10))));
+
+        ArgumentCaptor<CreateCollectionOptions> options = ArgumentCaptor.forClass(CreateCollectionOptions.class);
+        verify(db).createCollection(any(), options.capture());
+
+        assertThat(options.getValue().getExpireAfter(TimeUnit.SECONDS)).isEqualTo(10);
+    }
+
+    @Test // GH-4099
+    void doNotSetTimeSeriesExpireOptionForNegativeValue() {
+
+        template.createCollection("time-series-collection",
+            CollectionOptions.timeSeries("time_stamp", options -> options.expireAfter(Duration.ofSeconds(-10))));
+
+        ArgumentCaptor<CreateCollectionOptions> options = ArgumentCaptor.forClass(CreateCollectionOptions.class);
+        verify(db).createCollection(any(), options.capture());
+
+        assertThat(options.getValue().getExpireAfter(TimeUnit.SECONDS)).isEqualTo(0L);
+    }
+
+
+    class AutogenerateableId {
 
 		@Id BigInteger id;
 	}
@@ -2551,8 +2673,7 @@ public class MongoTemplateUnitTests extends MongoOperationsUnitTests {
 		@Id String id;
 		String firstname;
 
-		public Person() {
-		}
+		public Person() {}
 
 		public Person(String id, String firstname) {
 			this.id = id;
@@ -2682,6 +2803,48 @@ public class MongoTemplateUnitTests extends MongoOperationsUnitTests {
 
 		@Field("time_stamp") Instant timestamp;
 		Object meta;
+	}
+
+	@TimeSeries(timeField = "timestamp", expireAfter = "${my.timeout}")
+	static class TimeSeriesTypeWithExpireAfterFromProperty {
+
+		String id;
+		Instant timestamp;
+	}
+
+	@TimeSeries(timeField = "timestamp", expireAfter = "10m")
+	static class TimeSeriesTypeWithExpireAfterAsPlainString {
+
+		String id;
+		Instant timestamp;
+	}
+
+	@TimeSeries(timeField = "timestamp", expireAfter = "P1D")
+	static class TimeSeriesTypeWithExpireAfterAsIso8601Style {
+
+		String id;
+		Instant timestamp;
+	}
+
+	@TimeSeries(timeField = "timestamp", expireAfter = "#{10 + 1 + 's'}")
+	static class TimeSeriesTypeWithExpireAfterAsExpression {
+
+		String id;
+		Instant timestamp;
+	}
+
+	@TimeSeries(timeField = "timestamp", expireAfter = "#{T(java.time.Duration).ofSeconds(100)}")
+	static class TimeSeriesTypeWithExpireAfterAsExpressionResultingInDuration {
+
+		String id;
+		Instant timestamp;
+	}
+
+	@TimeSeries(timeField = "timestamp", expireAfter = "123ops")
+	static class TimeSeriesTypeWithInvalidExpireAfter {
+
+		String id;
+		Instant timestamp;
 	}
 
 	static class TypeImplementingIterator implements Iterator {

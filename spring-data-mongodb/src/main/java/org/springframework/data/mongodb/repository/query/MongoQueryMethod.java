@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2023 the original author or authors.
+ * Copyright 2011-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,11 +39,14 @@ import org.springframework.data.mongodb.repository.Query;
 import org.springframework.data.mongodb.repository.ReadPreference;
 import org.springframework.data.mongodb.repository.Tailable;
 import org.springframework.data.mongodb.repository.Update;
+import org.springframework.data.mongodb.util.BsonUtils;
 import org.springframework.data.projection.ProjectionFactory;
 import org.springframework.data.repository.core.RepositoryMetadata;
+import org.springframework.data.repository.query.ParametersSource;
 import org.springframework.data.repository.query.QueryMethod;
 import org.springframework.data.util.Lazy;
 import org.springframework.data.util.ReactiveWrappers;
+import org.springframework.data.util.ReflectionUtils;
 import org.springframework.data.util.TypeInformation;
 import org.springframework.lang.Nullable;
 import org.springframework.util.Assert;
@@ -93,8 +96,8 @@ public class MongoQueryMethod extends QueryMethod {
 	}
 
 	@Override
-	protected MongoParameters createParameters(Method method) {
-		return new MongoParameters(method, isGeoNearQuery(method));
+	protected MongoParameters createParameters(ParametersSource parametersSource) {
+		return new MongoParameters(parametersSource, isGeoNearQuery(parametersSource.getMethod()));
 	}
 
 	/**
@@ -476,7 +479,7 @@ public class MongoQueryMethod extends QueryMethod {
 	 * @since 3.4
 	 */
 	public Update getUpdateSource() {
-		return lookupUpdateAnnotation().get();
+		return lookupUpdateAnnotation().orElse(null);
 	}
 
 	/**
@@ -492,15 +495,32 @@ public class MongoQueryMethod extends QueryMethod {
 			if (isCollectionQuery() || isScrollQuery() || isSliceQuery() || isPageQuery() || isGeoNearQuery()
 					|| !isNumericOrVoidReturnValue()) { //
 				throw new IllegalStateException(
-						String.format("Update method may be void or return a numeric value (the number of updated documents)."
-								+ "Offending method: %s", method));
+						String.format(
+								"Update method may be void or return a numeric value (the number of updated documents)."
+										+ " Offending Method: %s.%s",
+								ClassUtils.getShortName(method.getDeclaringClass()), method.getName()));
 			}
 
 			if (hasAnnotatedUpdate()) { // must define either an update or an update pipeline
 				if (!StringUtils.hasText(getUpdateSource().update()) && ObjectUtils.isEmpty(getUpdateSource().pipeline())) {
 					throw new IllegalStateException(
-							String.format("Update method must define either 'Update#update' or 'Update#pipeline' attribute;"
-									+ " Offending method: %s", method));
+							String.format(
+									"Update method must define either 'Update#update' or 'Update#pipeline' attribute;"
+											+ " Offending Method: %s.%s",
+									ClassUtils.getShortName(method.getDeclaringClass()), method.getName()));
+				}
+			}
+		}
+
+		if (hasAnnotatedAggregation()) {
+			for (String stage : getAnnotatedAggregation()) {
+				if (BsonUtils.isJsonArray(stage)) {
+					throw new IllegalStateException(String.format(
+							"""
+									Invalid aggregation pipeline. Please split the definition from @Aggregation("[{...}, {...}]") to @Aggregation({ "{...}", "{...}" }).
+									Offending Method: %s.%s
+									""",
+							ClassUtils.getShortName(method.getDeclaringClass()), method.getName()));
 				}
 			}
 		}
@@ -514,7 +534,7 @@ public class MongoQueryMethod extends QueryMethod {
 		}
 
 		boolean isUpdateCountReturnType = ClassUtils.isAssignable(Number.class, resultType);
-		boolean isVoidReturnType = ClassUtils.isAssignable(Void.class, resultType);
+		boolean isVoidReturnType = ReflectionUtils.isVoid(resultType);
 
 		return isUpdateCountReturnType || isVoidReturnType;
 	}

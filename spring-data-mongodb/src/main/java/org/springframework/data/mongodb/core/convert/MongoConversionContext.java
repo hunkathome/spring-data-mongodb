@@ -1,5 +1,5 @@
 /*
- * Copyright 2022-2023 the original author or authors.
+ * Copyright 2022-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 package org.springframework.data.mongodb.core.convert;
 
 import org.bson.conversions.Bson;
+
 import org.springframework.data.convert.ValueConversionContext;
 import org.springframework.data.mapping.model.PropertyValueProvider;
 import org.springframework.data.mapping.model.SpELContext;
@@ -32,19 +33,19 @@ import org.springframework.lang.Nullable;
 public class MongoConversionContext implements ValueConversionContext<MongoPersistentProperty> {
 
 	private final PropertyValueProvider<MongoPersistentProperty> accessor; // TODO: generics
-	private final MongoPersistentProperty persistentProperty;
+	private final @Nullable MongoPersistentProperty persistentProperty;
 	private final MongoConverter mongoConverter;
 
-	@Nullable
-	private final SpELContext spELContext;
+	@Nullable private final SpELContext spELContext;
 
 	public MongoConversionContext(PropertyValueProvider<MongoPersistentProperty> accessor,
-			MongoPersistentProperty persistentProperty, MongoConverter mongoConverter) {
+			@Nullable MongoPersistentProperty persistentProperty, MongoConverter mongoConverter) {
 		this(accessor, persistentProperty, mongoConverter, null);
 	}
 
 	public MongoConversionContext(PropertyValueProvider<MongoPersistentProperty> accessor,
-			MongoPersistentProperty persistentProperty, MongoConverter mongoConverter, @Nullable SpELContext spELContext) {
+			@Nullable MongoPersistentProperty persistentProperty, MongoConverter mongoConverter,
+			@Nullable SpELContext spELContext) {
 
 		this.accessor = accessor;
 		this.persistentProperty = persistentProperty;
@@ -54,12 +55,17 @@ public class MongoConversionContext implements ValueConversionContext<MongoPersi
 
 	@Override
 	public MongoPersistentProperty getProperty() {
+
+		if (persistentProperty == null) {
+			throw new IllegalStateException("No underlying MongoPersistentProperty available");
+		}
+
 		return persistentProperty;
 	}
 
 	@Nullable
 	public Object getValue(String propertyPath) {
-		return accessor.getPropertyValue(persistentProperty.getOwner().getRequiredPersistentProperty(propertyPath));
+		return accessor.getPropertyValue(getProperty().getOwner().getRequiredPersistentProperty(propertyPath));
 	}
 
 	@Override

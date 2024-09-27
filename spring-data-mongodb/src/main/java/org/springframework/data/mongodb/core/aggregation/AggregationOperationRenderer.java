@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2023 the original author or authors.
+ * Copyright 2016-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -60,12 +60,13 @@ class AggregationOperationRenderer {
 				ExposedFields fields = exposedFieldsOperation.getFields();
 
 				if (operation instanceof InheritsFieldsAggregationOperation || exposedFieldsOperation.inheritsFields()) {
-					contextToUse = new InheritingExposedFieldsAggregationOperationContext(fields, contextToUse);
+					contextToUse = contextToUse.inheritAndExpose(fields);
 				} else {
 					contextToUse = fields.exposesNoFields() ? DEFAULT_CONTEXT
-							: new ExposedFieldsAggregationOperationContext(fields, contextToUse);
+							: contextToUse.expose(fields);
 				}
 			}
+
 		}
 
 		return operationDocuments;

@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2023 the original author or authors.
+ * Copyright 2011-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -358,6 +358,15 @@ public class MongoQueryMethodUnitTests {
 		assertThat(method.getAnnotatedReadPreference()).isEqualTo("secondaryPreferred");
 	}
 
+	@Test // GH-4546
+	void errorsOnInvalidAggregation() {
+
+		assertThatIllegalStateException() //
+				.isThrownBy(() -> queryMethod(InvalidAggregationMethodRepo.class, "findByAggregation").verify()) //
+				.withMessageContaining("Invalid aggregation") //
+				.withMessageContaining("findByAggregation");
+	}
+
 	private MongoQueryMethod queryMethod(Class<?> repository, String name, Class<?>... parameters) throws Exception {
 
 		Method method = repository.getMethod(name, parameters);
@@ -463,6 +472,12 @@ public class MongoQueryMethodUnitTests {
 
 		@org.springframework.data.mongodb.repository.Update("{ '$inc' : { 'visits' : 1 } }")
 		Person findAndIncrementVisitsByFirstname(String firstname);
+	}
+
+	interface InvalidAggregationMethodRepo extends Repository<Person, Long> {
+
+		@Aggregation("[{'$group': { _id: '$templateId', maxVersion : { $max : '$version'} } }]")
+		List<User> findByAggregation();
 	}
 
 	interface Customer {

@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2023 the original author or authors.
+ * Copyright 2016-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ import org.springframework.data.mongodb.core.mapping.MongoPersistentProperty;
 import org.springframework.data.mongodb.repository.query.MongoParameters.MongoParameter;
 import org.springframework.data.projection.ProjectionFactory;
 import org.springframework.data.repository.core.RepositoryMetadata;
+import org.springframework.data.repository.query.ParametersSource;
 import org.springframework.data.repository.util.ReactiveWrapperConverters;
 import org.springframework.data.util.Lazy;
 import org.springframework.data.util.ReactiveWrappers;
@@ -71,8 +72,8 @@ public class ReactiveMongoQueryMethod extends MongoQueryMethod {
 	}
 
 	@Override
-	protected MongoParameters createParameters(Method method) {
-		return new MongoParameters(method, isGeoNearQuery(method));
+	protected MongoParameters createParameters(ParametersSource parametersSource) {
+		return new MongoParameters(parametersSource, isGeoNearQuery(parametersSource.getMethod()));
 	}
 
 	@Override
@@ -156,7 +157,7 @@ public class ReactiveMongoQueryMethod extends MongoQueryMethod {
 			if (!multiWrapper) {
 				throw new IllegalStateException(String.format(
 						"Method has to use a either multi-item reactive wrapper return type or a wrapped Page/Slice type; Offending method: %s",
-						method.toString()));
+						method));
 			}
 		}
 

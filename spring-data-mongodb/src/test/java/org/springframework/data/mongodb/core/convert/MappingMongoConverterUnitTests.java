@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2023 the original author or authors.
+ * Copyright 2011-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,11 +23,16 @@ import static org.springframework.data.mongodb.core.DocumentTestUtils.*;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.net.URL;
+import java.nio.ByteBuffer;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
+import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.stream.Stream;
 
+import org.assertj.core.data.Percentage;
 import org.bson.BsonUndefined;
 import org.bson.types.Binary;
 import org.bson.types.Code;
@@ -38,6 +43,8 @@ import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -56,6 +63,7 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.annotation.PersistenceConstructor;
 import org.springframework.data.annotation.Transient;
 import org.springframework.data.annotation.TypeAlias;
+import org.springframework.data.convert.ConverterBuilder;
 import org.springframework.data.convert.CustomConversions;
 import org.springframework.data.convert.PropertyValueConverter;
 import org.springframework.data.convert.PropertyValueConverterFactory;
@@ -124,7 +132,8 @@ class MappingMongoConverterUnitTests {
 	@BeforeEach
 	void beforeEach() {
 
-		MongoCustomConversions conversions = new MongoCustomConversions();
+		MongoCustomConversions conversions = new MongoCustomConversions(
+				Arrays.asList(new ByteBufferToDoubleHolderConverter()));
 
 		mappingContext = new MongoMappingContext();
 		mappingContext.setApplicationContext(context);
@@ -671,6 +680,144 @@ class MappingMongoConverterUnitTests {
 		assertThat(wrapper.listOfMaps.size()).isEqualTo(1);
 		assertThat(wrapper.listOfMaps.get(0)).isNotNull();
 		assertThat(wrapper.listOfMaps.get(0).get("Foo")).isEqualTo(Locale.ENGLISH);
+	}
+
+	@ParameterizedTest(name = "{4}") // GH-4571
+	@MethodSource("listMapSetReadingSource")
+	<T> void initializesListMapSetPropertiesIfRequiredOnRead(org.bson.Document source, Class<T> type,
+			Function<T, Object> valueFunction, Object expectedValue, String displayName) {
+
+		T target = converter.read(type, source);
+		assertThat(target).extracting(valueFunction).isEqualTo(expectedValue);
+	}
+
+	private static Stream<Arguments> listMapSetReadingSource() {
+
+		Stream<Arguments> initialList = fixtureFor("contacts", CollectionWrapper.class, CollectionWrapper::getContacts,
+				builder -> {
+
+					builder.onValue(Collections.emptyList()).expect(Collections.emptyList());
+					builder.onNull().expect(null);
+					builder.onEmpty().expect(null);
+				});
+
+		Stream<Arguments> initializedList = fixtureFor("autoInitList", CollectionWrapper.class,
+				CollectionWrapper::getAutoInitList, builder -> {
+
+					builder.onValue(Collections.emptyList()).expect(Collections.emptyList());
+					builder.onNull().expect(null);
+					builder.onEmpty().expect(Collections.singletonList("spring"));
+				});
+
+		Stream<Arguments> initialSet = fixtureFor("contactsSet", CollectionWrapper.class, CollectionWrapper::getContactsSet,
+				builder -> {
+
+					builder.onValue(Collections.emptyList()).expect(Collections.emptySet());
+					builder.onNull().expect(null);
+					builder.onEmpty().expect(null);
+				});
+
+		Stream<Arguments> initialMap = fixtureFor("map", ClassWithMapProperty.class, ClassWithMapProperty::getMap,
+				builder -> {
+
+					builder.onValue(new org.bson.Document()).expect(Collections.emptyMap());
+					builder.onNull().expect(null);
+					builder.onEmpty().expect(null);
+				});
+
+		Stream<Arguments> initializedMap = fixtureFor("autoInitMap", ClassWithMapProperty.class,
+				ClassWithMapProperty::getAutoInitMap, builder -> {
+
+					builder.onValue(new org.bson.Document()).expect(Collections.emptyMap());
+					builder.onNull().expect(null);
+					builder.onEmpty().expect(Collections.singletonMap("spring", "data"));
+				});
+
+		return Stream.of(initialList, initializedList, initialSet, initialMap, initializedMap).flatMap(Function.identity());
+	}
+
+	static <T> Stream<Arguments> fixtureFor(String field, Class<T> type, Function<T, Object> valueFunction,
+			Consumer<FixtureBuilder> builderConsumer) {
+
+		FixtureBuilder builder = new FixtureBuilder(field, type, valueFunction);
+
+		builderConsumer.accept(builder);
+
+		return builder.fixtures.stream();
+	}
+
+	/**
+	 * Builder for fixtures.
+	 */
+	static class FixtureBuilder {
+
+		private final String field;
+		private final Class<?> typeUnderTest;
+		private final Function<?, Object> valueMappingFunction;
+		final List<Arguments> fixtures = new ArrayList<>();
+
+		FixtureBuilder(String field, Class<?> typeUnderTest, Function<?, Object> valueMappingFunction) {
+			this.field = field;
+			this.typeUnderTest = typeUnderTest;
+			this.valueMappingFunction = valueMappingFunction;
+		}
+
+		/**
+		 * If the document value is {@code null}.
+		 */
+		FixtureStep onNull() {
+			return new FixtureStep(false, null);
+		}
+
+		/**
+		 * If the document value is {@code value}.
+		 */
+		FixtureStep onValue(@Nullable Object value) {
+			return new FixtureStep(false, value);
+		}
+
+		/**
+		 * If the document does not contain the field.
+		 */
+		FixtureStep onEmpty() {
+			return new FixtureStep(true, null);
+		}
+
+		class FixtureStep {
+
+			private final boolean empty;
+			private final @Nullable Object documentValue;
+
+			public FixtureStep(boolean empty, @Nullable Object documentValue) {
+				this.empty = empty;
+				this.documentValue = documentValue;
+			}
+
+			/**
+			 * Then expect {@code expectedValue}.
+			 *
+			 * @param expectedValue
+			 */
+			void expect(@Nullable Object expectedValue) {
+
+				Arguments fixture;
+				if (empty) {
+					fixture = Arguments.of(new org.bson.Document(), typeUnderTest, valueMappingFunction, expectedValue,
+							"Empty document expecting '%s' at type %s".formatted(expectedValue, typeUnderTest.getSimpleName()));
+				} else {
+
+					String valueDescription = (documentValue == null ? "null"
+							: (documentValue + " (" + documentValue.getClass().getSimpleName()) + ")");
+
+					fixture = Arguments.of(new org.bson.Document(field, documentValue), typeUnderTest, valueMappingFunction,
+							expectedValue, "Field '%s' with value %s expecting '%s' at type %s".formatted(field, valueDescription,
+									expectedValue, typeUnderTest.getSimpleName()));
+				}
+
+				fixtures.add(fixture);
+			}
+		}
+
 	}
 
 	@Test // DATAMONGO-259
@@ -1436,7 +1583,7 @@ class MappingMongoConverterUnitTests {
 		assertThat(document.get("circle")).isInstanceOf(org.bson.Document.class);
 		assertThat(document.get("circle")).isEqualTo((Object) new org.bson.Document("center",
 				new org.bson.Document("x", circle.getCenter().getX()).append("y", circle.getCenter().getY()))
-						.append("radius", radius.getNormalizedValue()).append("metric", radius.getMetric().toString()));
+				.append("radius", radius.getNormalizedValue()).append("metric", radius.getMetric().toString()));
 	}
 
 	@Test // DATAMONGO-858
@@ -1469,7 +1616,7 @@ class MappingMongoConverterUnitTests {
 		assertThat(document.get("sphere")).isInstanceOf(org.bson.Document.class);
 		assertThat(document.get("sphere")).isEqualTo((Object) new org.bson.Document("center",
 				new org.bson.Document("x", sphere.getCenter().getX()).append("y", sphere.getCenter().getY()))
-						.append("radius", radius.getNormalizedValue()).append("metric", radius.getMetric().toString()));
+				.append("radius", radius.getNormalizedValue()).append("metric", radius.getMetric().toString()));
 	}
 
 	@Test // DATAMONGO-858
@@ -1487,7 +1634,7 @@ class MappingMongoConverterUnitTests {
 		assertThat(document.get("sphere")).isInstanceOf(org.bson.Document.class);
 		assertThat(document.get("sphere")).isEqualTo((Object) new org.bson.Document("center",
 				new org.bson.Document("x", sphere.getCenter().getX()).append("y", sphere.getCenter().getY()))
-						.append("radius", radius.getNormalizedValue()).append("metric", radius.getMetric().toString()));
+				.append("radius", radius.getNormalizedValue()).append("metric", radius.getMetric().toString()));
 	}
 
 	@Test // DATAMONGO-858
@@ -1520,7 +1667,7 @@ class MappingMongoConverterUnitTests {
 		assertThat(document.get("shape")).isInstanceOf(org.bson.Document.class);
 		assertThat(document.get("shape")).isEqualTo((Object) new org.bson.Document("center",
 				new org.bson.Document("x", sphere.getCenter().getX()).append("y", sphere.getCenter().getY()))
-						.append("radius", radius.getNormalizedValue()).append("metric", radius.getMetric().toString()));
+				.append("radius", radius.getNormalizedValue()).append("metric", radius.getMetric().toString()));
 	}
 
 	@Test // DATAMONGO-858
@@ -2530,8 +2677,8 @@ class MappingMongoConverterUnitTests {
 		converter.afterPropertiesSet();
 
 		org.bson.Document source = new org.bson.Document("typeImplementingMap",
-				new org.bson.Document("1st", "one").append("2nd", 2)).append("_class",
-						TypeWrappingTypeImplementingMap.class.getName());
+				new org.bson.Document("1st", "one").append("2nd", 2))
+				.append("_class", TypeWrappingTypeImplementingMap.class.getName());
 
 		TypeWrappingTypeImplementingMap target = converter.read(TypeWrappingTypeImplementingMap.class, source);
 
@@ -2547,7 +2694,132 @@ class MappingMongoConverterUnitTests {
 		converter.write(fieldWrite, document);
 
 		assertThat(document).containsEntry("writeAlways", null).doesNotContainKey("writeNonNull");
+		assertThat(document).containsEntry("writeAlwaysPersonDBRef", null).doesNotContainKey("writeNonNullPersonDBRef");
+	}
+
+	@Test // GH-4710
+	void shouldWriteSimplePropertyCorrectlyAfterConversionReturnsNull() {
+
+		MongoCustomConversions conversions = new MongoCustomConversions(ConverterBuilder
+				.writing(Integer.class, String.class, it -> null).andReading(it -> null).getConverters().stream().toList());
+
+		converter = new MappingMongoConverter(resolver, mappingContext);
+		converter.setCustomConversions(conversions);
+		converter.afterPropertiesSet();
+
+		WithFieldWrite fieldWrite = new WithFieldWrite();
+		fieldWrite.writeAlways = 10;
+		fieldWrite.writeNonNull = 20;
+
+		org.bson.Document document = new org.bson.Document();
+		converter.write(fieldWrite, document);
+
+		assertThat(document).containsEntry("writeAlways", null).doesNotContainKey("writeNonNull");
+	}
+
+	@Test // GH-4710
+	void shouldWriteComplexPropertyCorrectlyAfterConversionReturnsNull() {
+
+		MongoCustomConversions conversions = new MongoCustomConversions(ConverterBuilder
+				.writing(Person.class, String.class, it -> null).andReading(it -> null).getConverters().stream().toList());
+
+		converter = new MappingMongoConverter(resolver, mappingContext);
+		converter.setCustomConversions(conversions);
+		converter.afterPropertiesSet();
+
+		WithFieldWrite fieldWrite = new WithFieldWrite();
+		fieldWrite.writeAlwaysPerson = new Person();
+		fieldWrite.writeNonNullPerson = new Person();
+
+		org.bson.Document document = new org.bson.Document();
+		converter.write(fieldWrite, document);
+
 		assertThat(document).containsEntry("writeAlwaysPerson", null).doesNotContainKey("writeNonNullPerson");
+	}
+
+	@Test // GH-4710
+	void shouldDelegateWriteOfDBRefToCustomConversionIfConfigured() {
+
+		MongoCustomConversions conversions = new MongoCustomConversions(
+				ConverterBuilder.writing(Person.class, DBRef.class, it -> new DBRef("persons", "n/a")).andReading(it -> null)
+						.getConverters().stream().toList());
+
+		converter = new MappingMongoConverter(resolver, mappingContext);
+		converter.setCustomConversions(conversions);
+		converter.afterPropertiesSet();
+
+		WithFieldWrite fieldWrite = new WithFieldWrite();
+		fieldWrite.writeAlwaysPersonDBRef = new Person();
+		fieldWrite.writeNonNullPersonDBRef = new Person();
+
+		org.bson.Document document = new org.bson.Document();
+		converter.write(fieldWrite, document);
+
+		assertThat(document).containsEntry("writeAlwaysPersonDBRef", new DBRef("persons", "n/a"));// .doesNotContainKey("writeNonNullPersonDBRef");
+	}
+
+	@Test // GH-4710
+	void shouldDelegateWriteOfDBRefToCustomConversionIfConfiguredAndCheckNulls() {
+
+		MongoCustomConversions conversions = new MongoCustomConversions(ConverterBuilder
+				.writing(Person.class, DBRef.class, it -> null).andReading(it -> null).getConverters().stream().toList());
+
+		converter = new MappingMongoConverter(resolver, mappingContext);
+		converter.setCustomConversions(conversions);
+		converter.afterPropertiesSet();
+
+		WithFieldWrite fieldWrite = new WithFieldWrite();
+		fieldWrite.writeAlwaysPersonDBRef = new Person();
+		fieldWrite.writeNonNullPersonDBRef = new Person();
+
+		org.bson.Document document = new org.bson.Document();
+		converter.write(fieldWrite, document);
+
+		assertThat(document).containsEntry("writeAlwaysPersonDBRef", null).doesNotContainKey("writeNonNullPersonDBRef");
+	}
+
+	@Test // GH-4710
+	void shouldApplyNullConversionToPropertyValueConverters() {
+
+		MongoCustomConversions conversions = new MongoCustomConversions(
+				MongoCustomConversions.MongoConverterConfigurationAdapter.from(Collections.emptyList())
+						.configurePropertyConversions(registrar -> {
+							registrar.registerConverter(Person.class, "firstname", new MongoValueConverter<String, String>() {
+								@Override
+								public String readNull(MongoConversionContext context) {
+									return "NULL";
+								}
+
+								@Override
+								public String writeNull(MongoConversionContext context) {
+									return "NULL";
+								}
+
+								@Override
+								public String read(String value, MongoConversionContext context) {
+									return "";
+								}
+
+								@Override
+								public String write(String value, MongoConversionContext context) {
+									return "";
+								}
+							});
+						}));
+
+		converter = new MappingMongoConverter(resolver, mappingContext);
+		converter.setCustomConversions(conversions);
+		converter.afterPropertiesSet();
+
+		org.bson.Document document = new org.bson.Document();
+		converter.write(new Person(), document);
+
+		assertThat(document).containsEntry("foo", "NULL");
+
+		document = new org.bson.Document("foo", null);
+		Person result = converter.read(Person.class, document);
+
+		assertThat(result.firstname).isEqualTo("NULL");
 	}
 
 	@Test // GH-3686
@@ -2708,6 +2980,65 @@ class MappingMongoConverterUnitTests {
 		assertThat(person.getAddresses()).extracting(AddressProjection::getStreet).hasSize(1).containsOnly("hwy");
 	}
 
+	@Test // GH-4609
+	void projectShouldReadNestedInterfaceProjection() {
+
+		org.bson.Document source = new org.bson.Document("foo", "spring").append("address",
+				new org.bson.Document("s", "data").append("city", "mongodb"));
+
+		EntityProjectionIntrospector introspector = EntityProjectionIntrospector.create(converter.getProjectionFactory(),
+				EntityProjectionIntrospector.ProjectionPredicate.typeHierarchy()
+						.and((target, underlyingType) -> !converter.conversions.isSimpleType(target)),
+				mappingContext);
+
+		EntityProjection<WithNestedInterfaceProjection, Person> projection = introspector
+				.introspect(WithNestedInterfaceProjection.class, Person.class);
+		WithNestedInterfaceProjection person = converter.project(projection, source);
+
+		assertThat(person.getFirstname()).isEqualTo("spring");
+		assertThat(person.getAddress().getStreet()).isEqualTo("data");
+	}
+
+	@Test // GH-4609
+	void projectShouldReadNestedDtoProjection() {
+
+		org.bson.Document source = new org.bson.Document("foo", "spring").append("address",
+				new org.bson.Document("s", "data").append("city", "mongodb"));
+
+		EntityProjectionIntrospector introspector = EntityProjectionIntrospector.create(converter.getProjectionFactory(),
+				EntityProjectionIntrospector.ProjectionPredicate.typeHierarchy()
+						.and((target, underlyingType) -> !converter.conversions.isSimpleType(target)),
+				mappingContext);
+
+		EntityProjection<WithNestedDtoProjection, Person> projection = introspector
+				.introspect(WithNestedDtoProjection.class, Person.class);
+		WithNestedDtoProjection person = converter.project(projection, source);
+
+		assertThat(person.getFirstname()).isEqualTo("spring");
+		assertThat(person.getAddress().getStreet()).isEqualTo("data");
+	}
+
+	@Test // GH-4626
+	void projectShouldReadDtoProjectionPropertiesOnlyOnce() {
+
+		ByteBuffer number = ByteBuffer.allocate(8);
+		number.putDouble(1.2d);
+		number.flip();
+
+		org.bson.Document source = new org.bson.Document("number", number);
+
+		EntityProjectionIntrospector introspector = EntityProjectionIntrospector.create(converter.getProjectionFactory(),
+				EntityProjectionIntrospector.ProjectionPredicate.typeHierarchy()
+						.and((target, underlyingType) -> !converter.conversions.isSimpleType(target)),
+				mappingContext);
+
+		EntityProjection<DoubleHolderDto, WithDoubleHolder> projection = introspector.introspect(DoubleHolderDto.class,
+				WithDoubleHolder.class);
+		DoubleHolderDto result = converter.project(projection, source);
+
+		assertThat(result.number.number).isCloseTo(1.2, Percentage.withPercentage(1));
+	}
+
 	@Test // GH-2860
 	void projectShouldReadProjectionWithNestedEntity() {
 
@@ -2804,7 +3135,7 @@ class MappingMongoConverterUnitTests {
 		}));
 		converter.afterPropertiesSet();
 
-		WithValueConverters wvc = new WithValueConverters();
+		WithContextValueConverters wvc = new WithContextValueConverters();
 		wvc.converterBean = "spring";
 
 		org.bson.Document target = new org.bson.Document();
@@ -2815,7 +3146,7 @@ class MappingMongoConverterUnitTests {
 			assertThat((String) it.get("ooo")).startsWith("spring - ");
 		});
 
-		WithValueConverters read = converter.read(WithValueConverters.class, target);
+		WithContextValueConverters read = converter.read(WithContextValueConverters.class, target);
 		assertThat(read.converterBean).startsWith("spring -");
 	}
 
@@ -2918,7 +3249,8 @@ class MappingMongoConverterUnitTests {
 
 		org.bson.Document source = new org.bson.Document("nested", new org.bson.Document("field.name.with.dots", "A"));
 
-		WrapperForTypeWithPropertyHavingDotsInFieldName target = converter.read(WrapperForTypeWithPropertyHavingDotsInFieldName.class, source);
+		WrapperForTypeWithPropertyHavingDotsInFieldName target = converter
+				.read(WrapperForTypeWithPropertyHavingDotsInFieldName.class, source);
 		assertThat(target.nested).isNotNull();
 		assertThat(target.nested.value).isEqualTo("A");
 	}
@@ -2951,14 +3283,16 @@ class MappingMongoConverterUnitTests {
 		person.firstname = "bart";
 		person.lastname = "simpson";
 
-		org.bson.Document source = new org.bson.Document("mapOfPersons", new org.bson.Document("map.key.with.dots", write(person)));
+		org.bson.Document source = new org.bson.Document("mapOfPersons",
+				new org.bson.Document("map.key.with.dots", write(person)));
 
 		ClassWithMapProperty target = converter.read(ClassWithMapProperty.class, source);
 
 		assertThat(target.mapOfPersons).containsEntry("map.key.with.dots", person);
 	}
 
-	@ValueSource(classes = { ComplexIdAndNoAnnotation.class, ComplexIdAndIdAnnotation.class, ComplexIdAndMongoIdAnnotation.class, ComplexIdAndFieldAnnotation.class })
+	@ValueSource(classes = { ComplexIdAndNoAnnotation.class, ComplexIdAndIdAnnotation.class,
+			ComplexIdAndMongoIdAnnotation.class, ComplexIdAndFieldAnnotation.class })
 	@ParameterizedTest // GH-4524
 	void projectShouldReadComplexIdType(Class<?> projectionTargetType) {
 
@@ -3060,6 +3394,7 @@ class MappingMongoConverterUnitTests {
 		String lastname;
 
 		Set<Address> addresses;
+		Address address;
 
 		Person() {
 
@@ -3079,7 +3414,9 @@ class MappingMongoConverterUnitTests {
 				return false;
 			}
 			Person person = (Person) o;
-			return Objects.equals(id, person.id) && Objects.equals(birthDate, person.birthDate) && Objects.equals(firstname, person.firstname) && Objects.equals(lastname, person.lastname) && Objects.equals(addresses, person.addresses);
+			return Objects.equals(id, person.id) && Objects.equals(birthDate, person.birthDate)
+					&& Objects.equals(firstname, person.firstname) && Objects.equals(lastname, person.lastname)
+					&& Objects.equals(addresses, person.addresses);
 		}
 
 		@Override
@@ -3100,6 +3437,18 @@ class MappingMongoConverterUnitTests {
 		Set<AddressProjection> getAddresses();
 	}
 
+	interface WithNestedInterfaceProjection {
+		String getFirstname();
+
+		AddressProjection getAddress();
+	}
+
+	interface WithNestedDtoProjection {
+		String getFirstname();
+
+		AddressDto getAddress();
+	}
+
 	interface ProjectionWithNestedEntity {
 
 		Set<Address> getAddresses();
@@ -3108,6 +3457,19 @@ class MappingMongoConverterUnitTests {
 	interface AddressProjection {
 
 		String getStreet();
+	}
+
+	class AddressDto {
+
+		String street;
+
+		public String getStreet() {
+			return street;
+		}
+
+		public void setStreet(String street) {
+			this.street = street;
+		}
 	}
 
 	static class PersonDto {
@@ -3142,11 +3504,20 @@ class MappingMongoConverterUnitTests {
 
 	static class ClassWithMapProperty {
 		Map<Locale, String> map;
+		Map<String, String> autoInitMap = Collections.singletonMap("spring", "data");
 		Map<String, List<String>> mapOfLists;
 		Map<String, Object> mapOfObjects;
 		Map<String, String[]> mapOfStrings;
 		Map<String, Person> mapOfPersons;
 		TreeMap<String, Person> treeMapOfPersons;
+
+		public Map<Locale, String> getMap() {
+			return map;
+		}
+
+		public Map<String, String> getAutoInitMap() {
+			return this.autoInitMap;
+		}
 	}
 
 	static class ClassWithNestedMaps {
@@ -3168,6 +3539,19 @@ class MappingMongoConverterUnitTests {
 		List<List<String>> strings;
 		List<Map<String, Locale>> listOfMaps;
 		Set<Contact> contactsSet;
+		List<String> autoInitList = Collections.singletonList("spring");
+
+		public List<Contact> getContacts() {
+			return contacts;
+		}
+
+		public Set<Contact> getContactsSet() {
+			return contactsSet;
+		}
+
+		public List<String> getAutoInitList() {
+			return autoInitList;
+		}
 	}
 
 	static class LocaleWrapper {
@@ -3844,11 +4228,19 @@ class MappingMongoConverterUnitTests {
 		@org.springframework.data.mongodb.core.mapping.Field(
 				write = org.springframework.data.mongodb.core.mapping.Field.Write.ALWAYS) Integer writeAlways;
 
-		@org.springframework.data.mongodb.core.mapping.DBRef @org.springframework.data.mongodb.core.mapping.Field(
+		@org.springframework.data.mongodb.core.mapping.Field(
 				write = org.springframework.data.mongodb.core.mapping.Field.Write.NON_NULL) Person writeNonNullPerson;
 
-		@org.springframework.data.mongodb.core.mapping.DBRef @org.springframework.data.mongodb.core.mapping.Field(
+		@org.springframework.data.mongodb.core.mapping.Field(
 				write = org.springframework.data.mongodb.core.mapping.Field.Write.ALWAYS) Person writeAlwaysPerson;
+
+		@org.springframework.data.mongodb.core.mapping.DBRef
+		@org.springframework.data.mongodb.core.mapping.Field(
+				write = org.springframework.data.mongodb.core.mapping.Field.Write.NON_NULL) Person writeNonNullPersonDBRef;
+
+		@org.springframework.data.mongodb.core.mapping.DBRef
+		@org.springframework.data.mongodb.core.mapping.Field(
+				write = org.springframework.data.mongodb.core.mapping.Field.Write.ALWAYS) Person writeAlwaysPersonDBRef;
 
 	}
 
@@ -3857,6 +4249,11 @@ class MappingMongoConverterUnitTests {
 		@ValueConverter(Converter1.class) String converterWithDefaultCtor;
 
 		@ValueConverter(Converter2.class) String converterEnum;
+
+		String viaRegisteredConverter;
+	}
+
+	static class WithContextValueConverters {
 
 		@ValueConverter(Converter3.class) String converterBean;
 
@@ -4079,8 +4476,7 @@ class MappingMongoConverterUnitTests {
 
 	static class WithPropertyHavingDotsInFieldName {
 
-		@Field(name = "field.name.with.dots", nameType = Type.KEY)
-		String value;
+		@Field(name = "field.name.with.dots", nameType = Type.KEY) String value;
 	}
 
 	static class ComplexIdAndFieldAnnotation {
@@ -4109,4 +4505,30 @@ class MappingMongoConverterUnitTests {
 		ComplexId id;
 		String value;
 	}
+
+	@ReadingConverter
+	static class ByteBufferToDoubleHolderConverter implements Converter<ByteBuffer, DoubleHolder> {
+
+		@Override
+		public DoubleHolder convert(ByteBuffer source) {
+			return new DoubleHolder(source.getDouble());
+		}
+	}
+
+	record DoubleHolder(double number) {
+
+	}
+
+	static class WithDoubleHolder {
+		DoubleHolder number;
+	}
+
+	static class DoubleHolderDto {
+		DoubleHolder number;
+
+		public DoubleHolderDto(DoubleHolder number) {
+			this.number = number;
+		}
+	}
+
 }
